@@ -1,7 +1,7 @@
 use std::ops::Range;
 
 use bevy::{
-    asset::UntypedAssetId,
+    asset::{UntypedAssetId, load_internal_asset},
     core_pipeline::core_2d::graph::{Core2d, Node2d},
     ecs::{entity::EntityHashSet, query::QueryItem, system::lifetimeless::Read},
     prelude::*,
@@ -35,7 +35,7 @@ use bevy::{
     },
 };
 
-const SHADER_ASSET_PATH: &str = "shaders/custom_stencil.wgsl";
+const FLOOD_INIT_SHADER: Handle<Shader> = Handle::weak_from_u128(32132157492758);
 
 #[derive(Component, ExtractComponent, Clone, Copy, Default)]
 pub struct FloodComponent;
@@ -43,6 +43,13 @@ pub struct FloodComponent;
 pub struct FloodPlugin;
 impl Plugin for FloodPlugin {
     fn build(&self, app: &mut App) {
+        load_internal_asset!(
+            app,
+            FLOOD_INIT_SHADER,
+            "shaders/flood_init.wgsl",
+            Shader::from_wgsl
+        );
+
         app.add_plugins(ExtractComponentPlugin::<FloodComponent>::default());
 
         let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
@@ -81,14 +88,12 @@ impl Plugin for FloodPlugin {
 #[derive(Resource)]
 struct FloodPipeline {
     mesh_pipeline: Mesh2dPipeline,
-    shader_handle: Handle<Shader>,
 }
 
 impl FromWorld for FloodPipeline {
     fn from_world(world: &mut World) -> Self {
         Self {
             mesh_pipeline: Mesh2dPipeline::from_world(world),
-            shader_handle: world.resource::<AssetServer>().load(SHADER_ASSET_PATH),
         }
     }
 }
@@ -105,7 +110,7 @@ impl SpecializedMeshPipeline for FloodPipeline {
 
         Ok(RenderPipelineDescriptor {
             fragment: Some(FragmentState {
-                shader: self.shader_handle.clone(),
+                shader: FLOOD_INIT_SHADER,
                 entry_point: "fragment".into(),
                 ..descriptor
                     .fragment
@@ -213,7 +218,7 @@ fn extract_camera_phases(
         live_entities.insert(entity);
     }
 
-    // Clear out all dead views.
+    // Clear out all dead views
     flood_phases.retain(|camera_entity, _| live_entities.contains(camera_entity));
 }
 
@@ -239,7 +244,7 @@ fn queue_custom_meshes(
 
         // Since our phase can work on any 2d mesh we can reuse the default mesh 2d filter
         for (render_entity, visible_entity) in visible_entities.iter::<With<Mesh2d>>() {
-            // We only want meshes with the `FloodComponent` marker to be queued to our phase.
+            // We only want meshes with `FloodComponent` to be queued to our phase
             if has_marker.get(*render_entity).is_err() {
                 continue;
             }
@@ -285,7 +290,6 @@ fn queue_custom_meshes(
     }
 }
 
-// Render label used to order our render graph node that will render our phase
 #[derive(RenderLabel, Debug, Clone, Hash, PartialEq, Eq)]
 struct FloodDrawPassLabel;
 
