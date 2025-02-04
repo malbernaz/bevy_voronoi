@@ -1,0 +1,8 @@
+[package]
+name = "flood_plugin"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+bevy = { version = "0.15.1", features = ["trace"] }
+nonmax = "0.5.5"
