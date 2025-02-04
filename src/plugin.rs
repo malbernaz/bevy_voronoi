@@ -2,7 +2,10 @@ use std::ops::Range;
 
 use bevy::{
     asset::{UntypedAssetId, load_internal_asset},
-    core_pipeline::core_2d::graph::{Core2d, Node2d},
+    core_pipeline::{
+        core_2d::graph::{Core2d, Node2d},
+        fullscreen_vertex_shader::fullscreen_shader_vertex_state,
+    },
     ecs::{entity::EntityHashSet, query::QueryItem, system::lifetimeless::Read},
     prelude::*,
     render::{
@@ -21,11 +24,14 @@ use bevy::{
             PhaseItemExtraIndex, SetItemPipeline, ViewBinnedRenderPhases,
         },
         render_resource::{
-            CachedRenderPipelineId, FragmentState, PipelineCache, RenderPassDescriptor,
-            RenderPipelineDescriptor, SpecializedMeshPipeline, SpecializedMeshPipelineError,
-            SpecializedMeshPipelines,
+            BindGroupLayout, BindGroupLayoutEntries, CachedRenderPipelineId, ColorTargetState,
+            ColorWrites, FragmentState, MultisampleState, PipelineCache, RenderPassDescriptor,
+            RenderPipelineDescriptor, SamplerBindingType, ShaderStages, SpecializedMeshPipeline,
+            SpecializedMeshPipelineError, SpecializedMeshPipelines, SpecializedRenderPipeline,
+            SpecializedRenderPipelines, TextureFormat, TextureSampleType,
+            binding_types::{sampler, texture_2d, uniform_buffer},
         },
-        renderer::RenderContext,
+        renderer::{RenderContext, RenderDevice},
         sync_world::{MainEntity, RenderEntity},
         view::{RenderVisibleEntities, ViewTarget},
     },
@@ -35,7 +41,9 @@ use bevy::{
     },
 };
 
-const FLOOD_INIT_SHADER: Handle<Shader> = Handle::weak_from_u128(32132157492758);
+const FLOOD_INIT_SHADER: Handle<Shader> =
+    Handle::weak_from_u128(57844709471149694165463051306473017437);
+const FLOOD_SHADER: Handle<Shader> = Handle::weak_from_u128(45315317095310548371056454467549270133);
 
 #[derive(Component, ExtractComponent, Clone, Copy, Default)]
 pub struct FloodComponent;
@@ -57,21 +65,20 @@ impl Plugin for FloodPlugin {
         };
 
         render_app
-            .init_resource::<SpecializedMeshPipelines<FloodPipeline>>()
-            .init_resource::<ViewBinnedRenderPhases<FloodPhase>>()
-            .init_resource::<DrawFunctions<FloodPhase>>()
-            .add_render_command::<FloodPhase, DrawFloodMesh>()
+            .init_resource::<SpecializedMeshPipelines<FloodInitPipeline>>()
+            .init_resource::<SpecializedRenderPipelines<FloodPipeline>>()
+            .init_resource::<ViewBinnedRenderPhases<FloodInitPhase>>()
+            .init_resource::<DrawFunctions<FloodInitPhase>>()
+            .add_render_command::<FloodInitPhase, DrawFloodMesh>()
             .add_systems(ExtractSchedule, extract_camera_phases)
             .add_systems(
                 Render,
                 (
                     queue_custom_meshes.in_set(RenderSet::QueueMeshes),
-                    batch_and_prepare_binned_render_phase::<FloodPhase, Mesh2dPipeline>
+                    batch_and_prepare_binned_render_phase::<FloodInitPhase, Mesh2dPipeline>
                         .in_set(RenderSet::PrepareResources),
                 ),
-            );
-
-        render_app
+            )
             .add_render_graph_node::<ViewNodeRunner<FloodDrawNode>>(Core2d, FloodDrawPassLabel)
             .add_render_graph_edges(Core2d, (Node2d::MainOpaquePass, FloodDrawPassLabel));
     }
@@ -81,16 +88,18 @@ impl Plugin for FloodPlugin {
             return;
         };
 
-        render_app.init_resource::<FloodPipeline>();
+        render_app
+            .init_resource::<FloodInitPipeline>()
+            .init_resource::<FloodPipeline>();
     }
 }
 
 #[derive(Resource)]
-struct FloodPipeline {
+struct FloodInitPipeline {
     mesh_pipeline: Mesh2dPipeline,
 }
 
-impl FromWorld for FloodPipeline {
+impl FromWorld for FloodInitPipeline {
     fn from_world(world: &mut World) -> Self {
         Self {
             mesh_pipeline: Mesh2dPipeline::from_world(world),
@@ -98,7 +107,7 @@ impl FromWorld for FloodPipeline {
     }
 }
 
-impl SpecializedMeshPipeline for FloodPipeline {
+impl SpecializedMeshPipeline for FloodInitPipeline {
     type Key = Mesh2dPipelineKey;
 
     fn specialize(
@@ -109,6 +118,7 @@ impl SpecializedMeshPipeline for FloodPipeline {
         let descriptor = self.mesh_pipeline.specialize(key, &layout)?;
 
         Ok(RenderPipelineDescriptor {
+            label: Some("flood_init_pipeline".into()),
             fragment: Some(FragmentState {
                 shader: FLOOD_INIT_SHADER,
                 entry_point: "fragment".into(),
@@ -122,6 +132,65 @@ impl SpecializedMeshPipeline for FloodPipeline {
     }
 }
 
+#[derive(Resource)]
+struct FloodPipeline {
+    pub layout: BindGroupLayout,
+}
+
+impl FromWorld for FloodPipeline {
+    fn from_world(world: &mut World) -> Self {
+        Self {
+            layout: world.resource::<RenderDevice>().create_bind_group_layout(
+                "flood_bind_group_layout",
+                &BindGroupLayoutEntries::sequential(
+                    ShaderStages::FRAGMENT,
+                    (
+                        texture_2d(TextureSampleType::Float { filterable: true }),
+                        sampler(SamplerBindingType::Filtering),
+                        uniform_buffer::<u32>(false),
+                    ),
+                ),
+            ),
+        }
+    }
+}
+
+#[derive(Eq, PartialEq, Hash, Clone)]
+struct FloodPipelineKey {
+    msaa_samples: u32,
+}
+
+impl SpecializedRenderPipeline for FloodPipeline {
+    type Key = FloodPipelineKey;
+
+    fn specialize(&self, key: Self::Key) -> RenderPipelineDescriptor {
+        RenderPipelineDescriptor {
+            label: Some("flood_pipeline".into()),
+            layout: vec![self.layout.clone()],
+            vertex: fullscreen_shader_vertex_state(),
+            fragment: Some(FragmentState {
+                shader: FLOOD_SHADER,
+                shader_defs: vec![],
+                entry_point: "fragment".into(),
+                targets: vec![Some(ColorTargetState {
+                    format: TextureFormat::Rgba16Float,
+                    blend: None,
+                    write_mask: ColorWrites::ALL,
+                })],
+            }),
+            push_constant_ranges: vec![],
+            primitive: Default::default(),
+            depth_stencil: None,
+            multisample: MultisampleState {
+                count: key.msaa_samples,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
+            zero_initialize_workgroup_memory: false,
+        }
+    }
+}
+
 type DrawFloodMesh = (
     SetItemPipeline,
     SetMesh2dViewBindGroup<0>,
@@ -129,7 +198,7 @@ type DrawFloodMesh = (
     DrawMesh2d,
 );
 
-pub struct FloodPhase {
+pub struct FloodInitPhase {
     pub key: FloodPhaseBinKey,
     pub representative_entity: (Entity, MainEntity),
     pub batch_range: Range<u32>,
@@ -144,7 +213,7 @@ pub struct FloodPhaseBinKey {
     pub asset_id: UntypedAssetId,
 }
 
-impl PhaseItem for FloodPhase {
+impl PhaseItem for FloodInitPhase {
     #[inline]
     fn entity(&self) -> Entity {
         self.representative_entity.0
@@ -178,7 +247,7 @@ impl PhaseItem for FloodPhase {
     }
 }
 
-impl BinnedPhaseItem for FloodPhase {
+impl BinnedPhaseItem for FloodInitPhase {
     type BinKey = FloodPhaseBinKey;
 
     fn new(
@@ -187,7 +256,7 @@ impl BinnedPhaseItem for FloodPhase {
         batch_range: Range<u32>,
         extra_index: PhaseItemExtraIndex,
     ) -> Self {
-        FloodPhase {
+        FloodInitPhase {
             key,
             representative_entity,
             batch_range,
@@ -196,7 +265,7 @@ impl BinnedPhaseItem for FloodPhase {
     }
 }
 
-impl CachedRenderPipelinePhaseItem for FloodPhase {
+impl CachedRenderPipelinePhaseItem for FloodInitPhase {
     #[inline]
     fn cached_pipeline(&self) -> CachedRenderPipelineId {
         self.key.pipeline
@@ -205,7 +274,7 @@ impl CachedRenderPipelinePhaseItem for FloodPhase {
 
 fn extract_camera_phases(
     cameras: Extract<Query<(RenderEntity, &Camera), With<Camera2d>>>,
-    mut flood_phases: ResMut<ViewBinnedRenderPhases<FloodPhase>>,
+    mut flood_phases: ResMut<ViewBinnedRenderPhases<FloodInitPhase>>,
     mut live_entities: Local<EntityHashSet>,
 ) {
     live_entities.clear();
@@ -224,13 +293,13 @@ fn extract_camera_phases(
 
 #[allow(clippy::too_many_arguments)]
 fn queue_custom_meshes(
-    flood_draw_functions: Res<DrawFunctions<FloodPhase>>,
-    mut pipelines: ResMut<SpecializedMeshPipelines<FloodPipeline>>,
+    flood_draw_functions: Res<DrawFunctions<FloodInitPhase>>,
+    mut pipelines: ResMut<SpecializedMeshPipelines<FloodInitPipeline>>,
     pipeline_cache: Res<PipelineCache>,
-    flood_init_pipeline: Res<FloodPipeline>,
+    flood_init_pipeline: Res<FloodInitPipeline>,
     render_meshes: Res<RenderAssets<RenderMesh>>,
     mut render_mesh_instances: ResMut<RenderMesh2dInstances>,
-    mut custom_render_phases: ResMut<ViewBinnedRenderPhases<FloodPhase>>,
+    mut custom_render_phases: ResMut<ViewBinnedRenderPhases<FloodInitPhase>>,
     mut views: Query<(Entity, &RenderVisibleEntities, &Msaa)>,
     has_marker: Query<(), With<FloodComponent>>,
 ) {
@@ -257,28 +326,23 @@ fn queue_custom_meshes(
                 continue;
             };
 
-            let mesh_key =
-                view_key | Mesh2dPipelineKey::from_primitive_topology(mesh.primitive_topology());
-
             let pipeline_id = pipelines.specialize(
                 &pipeline_cache,
                 &flood_init_pipeline,
-                mesh_key,
+                view_key | Mesh2dPipelineKey::from_primitive_topology(mesh.primitive_topology()),
                 &mesh.layout,
             );
 
-            let pipeline_id = match pipeline_id {
-                Ok(id) => id,
+            let bin_key = match pipeline_id {
+                Ok(id) => FloodPhaseBinKey {
+                    pipeline: id,
+                    draw_function: draw_flood_mesh,
+                    asset_id: mesh_instance.mesh_asset_id.into(),
+                },
                 Err(err) => {
                     error!("{}", err);
                     continue;
                 }
-            };
-
-            let bin_key = FloodPhaseBinKey {
-                pipeline: pipeline_id,
-                draw_function: draw_flood_mesh,
-                asset_id: mesh_instance.mesh_asset_id.into(),
             };
 
             flood_phase.add(
@@ -305,11 +369,10 @@ impl ViewNode for FloodDrawNode {
         (camera, target): QueryItem<'w, Self::ViewQuery>,
         world: &'w World,
     ) -> Result<(), NodeRunError> {
-        let Some(flood_phases) = world.get_resource::<ViewBinnedRenderPhases<FloodPhase>>() else {
+        let Some(flood_phases) = world.get_resource::<ViewBinnedRenderPhases<FloodInitPhase>>()
+        else {
             return Ok(());
         };
-
-        let color_attachments = [Some(target.get_color_attachment())];
 
         let view_entity = graph.view_entity();
 
@@ -317,13 +380,11 @@ impl ViewNode for FloodDrawNode {
             return Ok(());
         };
 
-        let desc = RenderPassDescriptor {
+        let mut pass = render_context.begin_tracked_render_pass(RenderPassDescriptor {
             label: Some("flood_init_pass"),
-            color_attachments: &color_attachments,
+            color_attachments: &[Some(target.get_color_attachment())],
             ..default()
-        };
-
-        let mut pass = render_context.begin_tracked_render_pass(desc);
+        });
 
         if let Some(viewport) = camera.viewport.as_ref() {
             pass.set_camera_viewport(viewport);

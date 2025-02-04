@@ -25,13 +25,27 @@ fn main() {
 fn setup(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<ColorMaterial>>,
+    //mut materials: ResMut<Assets<ColorMaterial>>,
 ) {
     // cube
     // This cube will be rendered by the main pass, but it will also be rendered by our custom
     // pass. This should result in an unlit red cube
     commands.spawn((
-        Mesh2d(meshes.add(Circle::new(100.))),
+        Mesh2d(meshes.add(Circle::new(200.))),
+        //MeshMaterial2d(materials.add(Color::srgb_u8(124, 144, 255))),
+        FloodComponent,
+    ));
+
+    commands.spawn((
+        Transform::from_xyz(-400., 0., 0.),
+        Mesh2d(meshes.add(Circle::new(200.))),
+        //MeshMaterial2d(materials.add(Color::srgb_u8(124, 144, 255))),
+        FloodComponent,
+    ));
+
+    commands.spawn((
+        Transform::from_xyz(400., 0., 0.),
+        Mesh2d(meshes.add(Circle::new(200.))),
         //MeshMaterial2d(materials.add(Color::srgb_u8(124, 144, 255))),
         FloodComponent,
     ));
