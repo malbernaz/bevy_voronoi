@@ -4,7 +4,14 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-bevy = "0.15.1"
+bevy = { version = "0.15", default-features = false, features = [
+  "bevy_render",
+  "bevy_core_pipeline",
+  "bevy_winit",
+  "bevy_sprite",
+  "x11",
+  "png",
+] }
 
 [[example]]
 name = "sdf" 
