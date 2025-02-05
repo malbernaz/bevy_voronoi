@@ -9,3 +9,7 @@ bevy = "0.15.1"
 [[example]]
 name = "sdf" 
 path = "examples/sdf.rs"
+
+[[example]]
+name = "alpha_mask" 
+path = "examples/alpha_mask.rs"

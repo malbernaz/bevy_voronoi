@@ -34,37 +34,13 @@ fn main() {
         .run();
 }
 
-const X_EXTENT: f32 = 800.;
-
-fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>) {
+fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, assets: Res<AssetServer>) {
     commands.spawn(Camera2d);
 
-    let shapes = [
-        meshes.add(Circle::new(50.0)),
-        meshes.add(Annulus::new(25.0, 50.0)),
-        meshes.add(Capsule2d::new(25.0, 50.0)),
-        meshes.add(Rhombus::new(75.0, 100.0)),
-        meshes.add(Rectangle::new(50.0, 100.0)),
-        meshes.add(RegularPolygon::new(50.0, 6)),
-        meshes.add(Triangle2d::new(
-            Vec2::Y * 50.0,
-            Vec2::new(-50.0, -50.0),
-            Vec2::new(50.0, -50.0),
-        )),
-    ];
-    let num_shapes = shapes.len();
-
-    for (i, shape) in shapes.into_iter().enumerate() {
-        commands.spawn((
-            Mesh2d(shape),
-            VoronoiMaterial::default(),
-            Transform::from_xyz(
-                -X_EXTENT / 2. + i as f32 / (num_shapes - 1) as f32 * X_EXTENT,
-                0.0,
-                0.0,
-            ),
-        ));
-    }
+    commands.spawn((
+        Mesh2d(meshes.add(Rectangle::new(680., 252.))),
+        VoronoiMaterial::new(assets.load("ABC.png")),
+    ));
 }
 
 struct SdfPlugin;
@@ -201,7 +177,7 @@ impl ViewNode for CompositeNode {
         &self,
         _: &mut RenderGraphContext,
         render_context: &mut RenderContext<'w>,
-        (camera, target, flood_textures, composite_pipeline_id): QueryItem<'w, Self::ViewQuery>,
+        (camera, target, voronoi_textures, composite_pipeline_id): QueryItem<'w, Self::ViewQuery>,
         world: &'w World,
     ) -> Result<(), NodeRunError> {
         let composite_pipeline = world.resource::<CompositePipeline>();
@@ -223,7 +199,7 @@ impl ViewNode for CompositeNode {
             &composite_pipeline.layout,
             &BindGroupEntries::sequential((
                 post_process.source,
-                &flood_textures.input().default_view,
+                &voronoi_textures.input().default_view,
                 &sampler,
             )),
         );

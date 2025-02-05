@@ -21,44 +21,47 @@ use bevy::{
             TextureFormat, TextureUsages,
         },
         renderer::{RenderContext, RenderDevice},
-        sync_world::RenderEntity,
+        sync_world::{MainEntityHashMap, RenderEntity},
         texture::{CachedTexture, TextureCache},
         view::{RenderVisibleEntities, ViewTarget},
     },
     sprite::{Mesh2dPipeline, Mesh2dPipelineKey, RenderMesh2dInstances},
 };
 
-use crate::{flood::*, flood_mask::*};
+use crate::{flood::*, mask::*};
 
-#[derive(Component, ExtractComponent, Clone, Copy, Default)]
-pub struct FloodComponent;
-
-pub struct FloodPlugin;
-impl Plugin for FloodPlugin {
+pub struct Voronoi2dPlugin;
+impl Plugin for Voronoi2dPlugin {
     fn build(&self, app: &mut App) {
-        load_internal_asset!(app, FLOOD_MASK_SHADER, "flood_mask.wgsl", Shader::from_wgsl);
+        load_internal_asset!(app, MASK_SHADER, "mask.wgsl", Shader::from_wgsl);
         load_internal_asset!(app, FLOOD_INIT_SHADER, "flood_init.wgsl", Shader::from_wgsl);
         load_internal_asset!(app, FLOOD_SHADER, "flood.wgsl", Shader::from_wgsl);
 
-        app.add_plugins(ExtractComponentPlugin::<FloodComponent>::default());
+        app.add_plugins(ExtractComponentPlugin::<VoronoiMaterial>::default());
 
         let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
             return;
         };
 
         render_app
-            .init_resource::<SpecializedMeshPipelines<FloodMaskPipeline>>()
-            .init_resource::<ViewBinnedRenderPhases<FloodMaskPhase>>()
-            .init_resource::<DrawFunctions<FloodMaskPhase>>()
-            .add_render_command::<FloodMaskPhase, DrawFloodMesh>()
-            .add_systems(ExtractSchedule, extract_camera_phases)
+            .init_resource::<SpecializedMeshPipelines<MaskPipeline>>()
+            .init_resource::<ViewBinnedRenderPhases<MaskPhase>>()
+            .init_resource::<RenderVoronoiMaterials>()
+            .init_resource::<MaskMaterialBindGroups>()
+            .init_resource::<DrawFunctions<MaskPhase>>()
+            .add_render_command::<MaskPhase, DrawMaskMesh>()
+            .add_systems(
+                ExtractSchedule,
+                (extract_camera_phases, extract_flood_materials),
+            )
             .add_systems(
                 Render,
                 (
                     queue_custom_meshes.in_set(RenderSet::QueueMeshes),
                     prepare_flood_textures.in_set(RenderSet::Prepare),
-                    batch_and_prepare_binned_render_phase::<FloodMaskPhase, Mesh2dPipeline>
+                    batch_and_prepare_binned_render_phase::<MaskPhase, Mesh2dPipeline>
                         .in_set(RenderSet::PrepareResources),
+                    prepare_mask_material_bind_groups.in_set(RenderSet::PrepareBindGroups),
                 ),
             )
             .add_render_graph_node::<ViewNodeRunner<FloodDrawNode>>(Core2d, FloodDrawPassLabel)
@@ -78,14 +81,40 @@ impl Plugin for FloodPlugin {
         };
 
         render_app
-            .init_resource::<FloodMaskPipeline>()
+            .init_resource::<MaskPipeline>()
             .init_resource::<FloodPipeline>();
     }
 }
 
+#[derive(Component, ExtractComponent, Clone, Default)]
+pub struct VoronoiMaterial {
+    pub alpha_mask: Handle<Image>,
+}
+
+impl VoronoiMaterial {
+    pub fn new(alpha_mask: Handle<Image>) -> Self {
+        Self { alpha_mask }
+    }
+}
+
+impl From<VoronoiMaterial> for AssetId<Image> {
+    fn from(material: VoronoiMaterial) -> Self {
+        material.alpha_mask.id()
+    }
+}
+
+impl From<&VoronoiMaterial> for AssetId<Image> {
+    fn from(material: &VoronoiMaterial) -> Self {
+        material.alpha_mask.id()
+    }
+}
+
+#[derive(Resource, Deref, DerefMut, Default)]
+pub struct RenderVoronoiMaterials(MainEntityHashMap<AssetId<Image>>);
+
 fn extract_camera_phases(
     cameras: Extract<Query<(RenderEntity, &Camera), With<Camera2d>>>,
-    mut flood_phases: ResMut<ViewBinnedRenderPhases<FloodMaskPhase>>,
+    mut flood_phases: ResMut<ViewBinnedRenderPhases<MaskPhase>>,
     mut live_entities: Local<EntityHashSet>,
 ) {
     live_entities.clear();
@@ -102,29 +131,46 @@ fn extract_camera_phases(
     flood_phases.retain(|camera_entity, _| live_entities.contains(camera_entity));
 }
 
+fn extract_flood_materials(
+    mut material_instances: ResMut<RenderVoronoiMaterials>,
+    query: Extract<Query<(Entity, &ViewVisibility, &VoronoiMaterial), With<Mesh2d>>>,
+) {
+    material_instances.clear();
+
+    for (entity, view_visibility, material) in &query {
+        if view_visibility.get() {
+            material_instances.insert(entity.into(), material.into());
+        }
+    }
+}
+
 fn queue_custom_meshes(
-    flood_draw_functions: Res<DrawFunctions<FloodMaskPhase>>,
-    mut pipelines: ResMut<SpecializedMeshPipelines<FloodMaskPipeline>>,
+    flood_draw_functions: Res<DrawFunctions<MaskPhase>>,
+    mut pipelines: ResMut<SpecializedMeshPipelines<MaskPipeline>>,
     pipeline_cache: Res<PipelineCache>,
-    flood_init_pipeline: Res<FloodMaskPipeline>,
+    flood_init_pipeline: Res<MaskPipeline>,
     render_meshes: Res<RenderAssets<RenderMesh>>,
     mut render_mesh_instances: ResMut<RenderMesh2dInstances>,
-    mut custom_render_phases: ResMut<ViewBinnedRenderPhases<FloodMaskPhase>>,
+    mut custom_render_phases: ResMut<ViewBinnedRenderPhases<MaskPhase>>,
     mut views: Query<(Entity, &RenderVisibleEntities, &Msaa)>,
-    has_marker: Query<(), With<FloodComponent>>,
+    render_material_instances: Res<RenderVoronoiMaterials>,
 ) {
+    if render_material_instances.is_empty() {
+        return;
+    }
+
     for (view_entity, visible_entities, msaa) in &mut views {
         let Some(flood_phase) = custom_render_phases.get_mut(&view_entity) else {
             continue;
         };
-        let draw_flood_mesh = flood_draw_functions.read().id::<DrawFloodMesh>();
+        let draw_flood_mesh = flood_draw_functions.read().id::<DrawMaskMesh>();
 
         let view_key = Mesh2dPipelineKey::from_msaa_samples(msaa.samples());
 
         for (render_entity, visible_entity) in visible_entities.iter::<With<Mesh2d>>() {
-            if has_marker.get(*render_entity).is_err() {
+            if render_material_instances.get(visible_entity).is_none() {
                 continue;
-            }
+            };
 
             let Some(mesh_instance) = render_mesh_instances.get_mut(visible_entity) else {
                 continue;
@@ -142,10 +188,10 @@ fn queue_custom_meshes(
             );
 
             let bin_key = match pipeline_id {
-                Ok(id) => FloodMaskPhaseBinKey {
+                Ok(id) => MaskPhaseBinKey {
                     pipeline: id,
                     draw_function: draw_flood_mesh,
-                    asset_id: mesh_instance.mesh_asset_id.into(),
+                    mesh_id: mesh_instance.mesh_asset_id.into(),
                 },
                 Err(err) => {
                     error!("{}", err);
@@ -163,13 +209,13 @@ fn queue_custom_meshes(
 }
 
 #[derive(Clone, Component)]
-pub struct FloodTextures {
+pub struct VoronoiTexture {
     flip: bool,
     texture_a: CachedTexture,
     texture_b: CachedTexture,
 }
 
-impl FloodTextures {
+impl VoronoiTexture {
     pub fn input(&self) -> &CachedTexture {
         if self.flip {
             &self.texture_b
@@ -212,7 +258,7 @@ fn create_aux_texture(
 fn prepare_flood_textures(
     mut commands: Commands,
     view_query: Query<(Entity, &ViewTarget)>,
-    flood_init_phases: Res<ViewBinnedRenderPhases<FloodMaskPhase>>,
+    flood_init_phases: Res<ViewBinnedRenderPhases<MaskPhase>>,
     render_device: Res<RenderDevice>,
     mut texture_cache: ResMut<TextureCache>,
 ) {
@@ -221,7 +267,7 @@ fn prepare_flood_textures(
             continue;
         }
 
-        commands.entity(entity).insert(FloodTextures {
+        commands.entity(entity).insert(VoronoiTexture {
             flip: false,
             texture_a: create_aux_texture(
                 view_target,
@@ -245,7 +291,11 @@ struct FloodDrawPassLabel;
 #[derive(Default)]
 struct FloodDrawNode;
 impl ViewNode for FloodDrawNode {
-    type ViewQuery = (Read<ExtractedCamera>, Read<ViewTarget>, Read<FloodTextures>);
+    type ViewQuery = (
+        Read<ExtractedCamera>,
+        Read<ViewTarget>,
+        Read<VoronoiTexture>,
+    );
 
     fn run<'w>(
         &self,
@@ -258,7 +308,7 @@ impl ViewNode for FloodDrawNode {
 
         let mut flood_textures = flood_textures.clone();
 
-        flood_mask_pass(
+        mask_pass(
             world,
             render_context,
             &view_entity,
