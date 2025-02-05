@@ -1,7 +1,14 @@
 [package]
-name = "flood_plugin"
+name = "bevy_voronoi"
+description = "A low-level Bevy library to generate Voronoi diagrams from 2d meshes"
+categories = ["graphics", "game-development", "game-engines", "rendering"]
 version = "0.1.0"
+authors = ["Miguel Albernaz"]
+repository = "https://github.com/malbernaz/bevy_voronoi"
+license = "MIT"
+readme = "README.md"
 edition = "2024"
+exclude = ["static/*"]
 
 [dependencies]
 bevy = { version = "0.15", default-features = false, features = [

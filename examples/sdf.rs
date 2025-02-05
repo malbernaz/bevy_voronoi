@@ -24,7 +24,7 @@ use bevy::{
         view::{ExtractedView, ViewTarget},
     },
 };
-use flood_plugin::prelude::*;
+use bevy_voronoi::prelude::*;
 
 fn main() {
     App::new()
