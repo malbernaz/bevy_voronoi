@@ -7,7 +7,10 @@
 fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
     let s = textureSample(flood_texture, flood_sampler, in.uv);
 
-    // make non white fragments negative to avoid articats in the end result
+    // TODO: understand what why this step is necessary
+    // using the uv directly from the mask shader ads an artifact 
+    // in the top right corner of the screen
+    // this check gets rid of it
     if s.r != 1. && s.g != 1. && s.b != 1. && s.a != 1. {
         return vec4(-1.);
     }
