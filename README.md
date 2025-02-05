@@ -15,4 +15,4 @@ See the examples folder for usage details.
 
 <br />
 
-![sdf](https://github.com/malbernaz/bevy_voronoi/raw/main/static/demo_uv.png)
+![demo](https://github.com/malbernaz/bevy_voronoi/raw/main/static/demo.png)
