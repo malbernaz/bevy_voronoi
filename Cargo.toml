@@ -7,7 +7,7 @@ authors = ["Miguel Albernaz"]
 repository = "https://github.com/malbernaz/bevy_voronoi"
 license = "MIT"
 readme = "README.md"
-edition = "2024"
+edition = "2021"
 exclude = ["static/*"]
 
 [dependencies]
