@@ -1,3 +1,5 @@
+![demo](https://github.com/malbernaz/bevy_voronoi/raw/main/static/demo.png)
+
 # `bevy_voronoi`
 
 A low-level **Bevy** plugin for generating **Voronoi diagrams** from 2D meshes.
@@ -19,7 +21,3 @@ See the examples folder for usage details.
 | bevy   | bevy_voronoi |
 | ------ | ------------ |
 | `0.15` | `0.1`        |
-
-<br />
-
-![demo](https://github.com/malbernaz/bevy_voronoi/raw/main/static/demo.png)
