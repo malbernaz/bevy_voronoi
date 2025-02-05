@@ -4,7 +4,6 @@ use bevy::{
     ecs::{entity::EntityHashSet, query::QueryItem, system::lifetimeless::Read},
     prelude::*,
     render::{
-        Extract, Render, RenderApp, RenderSet,
         batching::no_gpu_preprocessing::batch_and_prepare_binned_render_phase,
         camera::ExtractedCamera,
         extract_component::{ExtractComponent, ExtractComponentPlugin},
@@ -24,6 +23,7 @@ use bevy::{
         sync_world::{MainEntityHashMap, RenderEntity},
         texture::{CachedTexture, TextureCache},
         view::{RenderVisibleEntities, ViewTarget},
+        Extract, Render, RenderApp, RenderSet,
     },
     sprite::{Mesh2dPipeline, Mesh2dPipelineKey, RenderMesh2dInstances},
 };
@@ -243,16 +243,19 @@ fn create_aux_texture(
     render_device: &RenderDevice,
     label: &'static str,
 ) -> CachedTexture {
-    texture_cache.get(render_device, TextureDescriptor {
-        label: Some(label),
-        size: view_target.main_texture().size(),
-        mip_level_count: 1,
-        sample_count: 1,
-        dimension: TextureDimension::D2,
-        format: TextureFormat::Rgba16Float,
-        usage: TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING,
-        view_formats: &[],
-    })
+    texture_cache.get(
+        render_device,
+        TextureDescriptor {
+            label: Some(label),
+            size: view_target.main_texture().size(),
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: TextureDimension::D2,
+            format: TextureFormat::Rgba16Float,
+            usage: TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        },
+    )
 }
 
 fn prepare_flood_textures(
@@ -308,7 +311,7 @@ impl ViewNode for FloodDrawNode {
 
         let mut flood_textures = flood_textures.clone();
 
-        mask_pass(
+        run_mask_pass(
             world,
             render_context,
             &view_entity,
@@ -317,7 +320,7 @@ impl ViewNode for FloodDrawNode {
         );
         flood_textures.flip();
 
-        flood_init_pass(
+        run_flood_init_pass(
             world,
             render_context,
             camera,
@@ -333,7 +336,7 @@ impl ViewNode for FloodDrawNode {
             / 2;
 
         while step >= 1 {
-            flood_pass(
+            run_flood_pass(
                 world,
                 render_context,
                 camera,

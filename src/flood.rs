@@ -4,12 +4,12 @@ use bevy::{
     render::{
         camera::ExtractedCamera,
         render_resource::{
+            binding_types::{sampler, texture_2d, uniform_buffer},
             BindGroupEntries, BindGroupLayout, BindGroupLayoutEntries, CachedRenderPipelineId,
             ColorTargetState, ColorWrites, FragmentState, MultisampleState, Operations,
             PipelineCache, RenderPassColorAttachment, RenderPassDescriptor,
             RenderPipelineDescriptor, SamplerBindingType, SamplerDescriptor, ShaderStages,
             TextureFormat, TextureSampleType, UniformBuffer,
-            binding_types::{sampler, texture_2d, uniform_buffer},
         },
         renderer::{RenderContext, RenderDevice, RenderQueue},
         texture::CachedTexture,
@@ -119,7 +119,7 @@ impl FromWorld for FloodPipeline {
     }
 }
 
-pub fn flood_init_pass<'w>(
+pub fn run_flood_init_pass<'w>(
     world: &'w World,
     render_context: &mut RenderContext<'w>,
     camera: &ExtractedCamera,
@@ -164,7 +164,7 @@ pub fn flood_init_pass<'w>(
     pass.draw(0..3, 0..1);
 }
 
-pub fn flood_pass<'w>(
+pub fn run_flood_pass<'w>(
     world: &'w World,
     render_context: &mut RenderContext<'w>,
     camera: &ExtractedCamera,

@@ -2,7 +2,7 @@ use std::ops::Range;
 
 use bevy::{
     asset::UntypedAssetId,
-    ecs::system::{SystemParamItem, lifetimeless::SRes},
+    ecs::system::{lifetimeless::SRes, SystemParamItem},
     prelude::*,
     render::{
         camera::ExtractedCamera,
@@ -14,12 +14,12 @@ use bevy::{
             TrackedRenderPass, ViewBinnedRenderPhases,
         },
         render_resource::{
+            binding_types::{sampler, texture_2d},
             BindGroup, BindGroupEntries, BindGroupLayout, BindGroupLayoutEntries,
             CachedRenderPipelineId, ColorTargetState, ColorWrites, FragmentState, Operations,
             RenderPassColorAttachment, RenderPassDescriptor, RenderPipelineDescriptor,
             SamplerBindingType, SamplerDescriptor, ShaderStages, SpecializedMeshPipeline,
             SpecializedMeshPipelineError, TextureFormat, TextureSampleType,
-            binding_types::{sampler, texture_2d},
         },
         renderer::{RenderContext, RenderDevice},
         sync_world::{MainEntity, MainEntityHashMap},
@@ -226,7 +226,7 @@ impl<P: PhaseItem, const I: usize> RenderCommand<P> for SetMaskMaterialBindGroup
     }
 }
 
-pub fn mask_pass<'w>(
+pub fn run_mask_pass<'w>(
     world: &'w World,
     render_context: &mut RenderContext<'w>,
     view_entity: &Entity,
