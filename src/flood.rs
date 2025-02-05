@@ -16,17 +16,60 @@ use bevy::{
     },
 };
 
+pub const FLOOD_INIT_SHADER: Handle<Shader> =
+    Handle::weak_from_u128(42754076504256497540759847542693085498);
 pub const FLOOD_SHADER: Handle<Shader> =
     Handle::weak_from_u128(45315317095310548371056454467549270133);
 
 #[derive(Resource)]
 pub struct FloodPipeline {
+    pub init_layout: BindGroupLayout,
+    pub init_pipeline: CachedRenderPipelineId,
     pub layout: BindGroupLayout,
     pub pipeline: CachedRenderPipelineId,
 }
 
 impl FromWorld for FloodPipeline {
     fn from_world(world: &mut World) -> Self {
+        let init_layout = world.resource::<RenderDevice>().create_bind_group_layout(
+            "flood_init_bind_group_layout",
+            &BindGroupLayoutEntries::sequential(
+                ShaderStages::FRAGMENT,
+                (
+                    texture_2d(TextureSampleType::Float { filterable: true }),
+                    sampler(SamplerBindingType::Filtering),
+                ),
+            ),
+        );
+
+        let init_pipeline =
+            world
+                .resource::<PipelineCache>()
+                .queue_render_pipeline(RenderPipelineDescriptor {
+                    label: Some("flood_init_pipeline".into()),
+                    layout: vec![init_layout.clone()],
+                    vertex: fullscreen_shader_vertex_state(),
+                    fragment: Some(FragmentState {
+                        shader: FLOOD_INIT_SHADER,
+                        shader_defs: vec![],
+                        entry_point: "fragment".into(),
+                        targets: vec![Some(ColorTargetState {
+                            format: TextureFormat::Rgba16Float,
+                            blend: None,
+                            write_mask: ColorWrites::ALL,
+                        })],
+                    }),
+                    push_constant_ranges: vec![],
+                    primitive: Default::default(),
+                    depth_stencil: None,
+                    multisample: MultisampleState {
+                        count: 1,
+                        mask: !0,
+                        alpha_to_coverage_enabled: false,
+                    },
+                    zero_initialize_workgroup_memory: false,
+                });
+
         let layout = world.resource::<RenderDevice>().create_bind_group_layout(
             "flood_bind_group_layout",
             &BindGroupLayoutEntries::sequential(
@@ -67,8 +110,58 @@ impl FromWorld for FloodPipeline {
                     zero_initialize_workgroup_memory: false,
                 });
 
-        Self { layout, pipeline }
+        Self {
+            init_pipeline,
+            init_layout,
+            layout,
+            pipeline,
+        }
     }
+}
+
+pub fn flood_init_pass<'w>(
+    world: &'w World,
+    render_context: &mut RenderContext<'w>,
+    camera: &ExtractedCamera,
+    input: &CachedTexture,
+    output: &CachedTexture,
+) {
+    let flood_pipeline = world.resource::<FloodPipeline>();
+
+    let Some(pipeline) = world
+        .resource::<PipelineCache>()
+        .get_render_pipeline(flood_pipeline.init_pipeline)
+    else {
+        return;
+    };
+
+    let sampler = render_context
+        .render_device()
+        .create_sampler(&SamplerDescriptor::default());
+
+    let bind_group = render_context.render_device().create_bind_group(
+        "flood_init_bind_group",
+        &flood_pipeline.init_layout,
+        &BindGroupEntries::sequential((&input.default_view, &sampler)),
+    );
+
+    let mut pass = render_context.begin_tracked_render_pass(RenderPassDescriptor {
+        label: Some("flood_init_pass"),
+        color_attachments: &[Some(RenderPassColorAttachment {
+            view: &output.default_view,
+            resolve_target: None,
+            ops: Operations::default(),
+        })],
+        ..default()
+    });
+
+    if let Some(viewport) = camera.viewport.as_ref() {
+        pass.set_camera_viewport(viewport);
+    }
+
+    pass.set_render_pipeline(pipeline);
+    pass.set_bind_group(0, &bind_group, &[]);
+    pass.draw(0..3, 0..1);
 }
 
 pub fn flood_pass<'w>(

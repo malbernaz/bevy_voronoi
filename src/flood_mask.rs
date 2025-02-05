@@ -24,15 +24,15 @@ use bevy::{
     },
 };
 
-pub const FLOOD_INIT_SHADER: Handle<Shader> =
+pub const FLOOD_MASK_SHADER: Handle<Shader> =
     Handle::weak_from_u128(57844709471149694165463051306473017437);
 
 #[derive(Resource)]
-pub struct FloodInitPipeline {
+pub struct FloodMaskPipeline {
     mesh_pipeline: Mesh2dPipeline,
 }
 
-impl FromWorld for FloodInitPipeline {
+impl FromWorld for FloodMaskPipeline {
     fn from_world(world: &mut World) -> Self {
         Self {
             mesh_pipeline: Mesh2dPipeline::from_world(world),
@@ -40,7 +40,7 @@ impl FromWorld for FloodInitPipeline {
     }
 }
 
-impl SpecializedMeshPipeline for FloodInitPipeline {
+impl SpecializedMeshPipeline for FloodMaskPipeline {
     type Key = Mesh2dPipelineKey;
 
     fn specialize(
@@ -51,9 +51,9 @@ impl SpecializedMeshPipeline for FloodInitPipeline {
         let descriptor = self.mesh_pipeline.specialize(key, &layout)?;
 
         Ok(RenderPipelineDescriptor {
-            label: Some("flood_init_pipeline".into()),
+            label: Some("flood_mask_pipeline".into()),
             fragment: Some(FragmentState {
-                shader: FLOOD_INIT_SHADER,
+                shader: FLOOD_MASK_SHADER,
                 shader_defs: vec![],
                 entry_point: "fragment".into(),
                 targets: vec![Some(ColorTargetState {
@@ -69,8 +69,8 @@ impl SpecializedMeshPipeline for FloodInitPipeline {
     }
 }
 
-pub struct FloodInitPhase {
-    pub key: FloodInitPhaseBinKey,
+pub struct FloodMaskPhase {
+    pub key: FloodMaskPhaseBinKey,
     pub representative_entity: (Entity, MainEntity),
     pub batch_range: Range<u32>,
     pub extra_index: PhaseItemExtraIndex,
@@ -78,13 +78,13 @@ pub struct FloodInitPhase {
 
 /// Data that must be identical in order to batch phase items together.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct FloodInitPhaseBinKey {
+pub struct FloodMaskPhaseBinKey {
     pub pipeline: CachedRenderPipelineId,
     pub draw_function: DrawFunctionId,
     pub asset_id: UntypedAssetId,
 }
 
-impl PhaseItem for FloodInitPhase {
+impl PhaseItem for FloodMaskPhase {
     #[inline]
     fn entity(&self) -> Entity {
         self.representative_entity.0
@@ -118,8 +118,8 @@ impl PhaseItem for FloodInitPhase {
     }
 }
 
-impl BinnedPhaseItem for FloodInitPhase {
-    type BinKey = FloodInitPhaseBinKey;
+impl BinnedPhaseItem for FloodMaskPhase {
+    type BinKey = FloodMaskPhaseBinKey;
 
     fn new(
         key: Self::BinKey,
@@ -127,7 +127,7 @@ impl BinnedPhaseItem for FloodInitPhase {
         batch_range: Range<u32>,
         extra_index: PhaseItemExtraIndex,
     ) -> Self {
-        FloodInitPhase {
+        FloodMaskPhase {
             key,
             representative_entity,
             batch_range,
@@ -136,7 +136,7 @@ impl BinnedPhaseItem for FloodInitPhase {
     }
 }
 
-impl CachedRenderPipelinePhaseItem for FloodInitPhase {
+impl CachedRenderPipelinePhaseItem for FloodMaskPhase {
     #[inline]
     fn cached_pipeline(&self) -> CachedRenderPipelineId {
         self.key.pipeline
@@ -150,26 +150,26 @@ pub type DrawFloodMesh = (
     DrawMesh2d,
 );
 
-pub fn flood_init_pass<'w>(
+pub fn flood_mask_pass<'w>(
     world: &'w World,
     render_context: &mut RenderContext<'w>,
     view_entity: &Entity,
     output: &CachedTexture,
     camera: &ExtractedCamera,
 ) {
-    let Some(flood_init_phases) = world.get_resource::<ViewBinnedRenderPhases<FloodInitPhase>>()
+    let Some(flood_mask_phases) = world.get_resource::<ViewBinnedRenderPhases<FloodMaskPhase>>()
     else {
-        error!("FloodInitPhase not available");
+        error!("FloodMaskPhase not available");
         return;
     };
 
-    let Some(flood_init_phase) = flood_init_phases.get(view_entity) else {
-        error!("View FloodInitPhase not available");
+    let Some(flood_mask_phase) = flood_mask_phases.get(view_entity) else {
+        error!("View FloodMaskPhase not available");
         return;
     };
 
     let mut pass = render_context.begin_tracked_render_pass(RenderPassDescriptor {
-        label: Some("flood_init_pass"),
+        label: Some("flood_mask_pass"),
         color_attachments: &[Some(RenderPassColorAttachment {
             view: &output.default_view,
             resolve_target: None,
@@ -182,9 +182,9 @@ pub fn flood_init_pass<'w>(
         pass.set_camera_viewport(viewport);
     }
 
-    if !flood_init_phase.is_empty() {
-        if let Err(err) = flood_init_phase.render(&mut pass, world, *view_entity) {
-            error!("Error encountered while rendering the flood init phase {err:?}");
+    if !flood_mask_phase.is_empty() {
+        if let Err(err) = flood_mask_phase.render(&mut pass, world, *view_entity) {
+            error!("Error encountered while rendering the flood mask phase {err:?}");
         }
     }
 }
