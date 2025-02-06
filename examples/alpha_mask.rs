@@ -6,22 +6,22 @@ use bevy::{
     ecs::{query::QueryItem, system::lifetimeless::Read},
     prelude::*,
     render::{
-        Render, RenderApp, RenderSet,
         camera::ExtractedCamera,
         render_graph::{
             NodeRunError, RenderGraphApp, RenderGraphContext, RenderLabel, ViewNode, ViewNodeRunner,
         },
         render_resource::{
+            binding_types::{sampler, texture_2d},
             BindGroupEntries, BindGroupLayout, BindGroupLayoutEntries, CachedRenderPipelineId,
             ColorTargetState, ColorWrites, FragmentState, MultisampleState, Operations,
             PipelineCache, RenderPassColorAttachment, RenderPassDescriptor,
             RenderPipelineDescriptor, SamplerBindingType, SamplerDescriptor, ShaderStages,
             SpecializedRenderPipeline, SpecializedRenderPipelines, TextureFormat,
             TextureSampleType,
-            binding_types::{sampler, texture_2d},
         },
         renderer::{RenderContext, RenderDevice},
         view::{ExtractedView, ViewTarget},
+        Render, RenderApp, RenderSet,
     },
 };
 use bevy_voronoi::prelude::*;
