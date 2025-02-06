@@ -2,7 +2,7 @@
 
 # `bevy_voronoi`
 
-A low-level **Bevy** plugin for generating **Voronoi diagrams** from 2D meshes.
+A low-level **Bevy** plugin for generating **Voronoi diagrams** from 2D meshes and textures.
 
 ## **Features**
 
