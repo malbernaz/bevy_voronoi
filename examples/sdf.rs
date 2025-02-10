@@ -6,22 +6,22 @@ use bevy::{
     ecs::{query::QueryItem, system::lifetimeless::Read},
     prelude::*,
     render::{
-        Render, RenderApp, RenderSet,
         camera::ExtractedCamera,
         render_graph::{
             NodeRunError, RenderGraphApp, RenderGraphContext, RenderLabel, ViewNode, ViewNodeRunner,
         },
         render_resource::{
+            binding_types::{sampler, texture_2d},
             BindGroupEntries, BindGroupLayout, BindGroupLayoutEntries, CachedRenderPipelineId,
             ColorTargetState, ColorWrites, FragmentState, MultisampleState, Operations,
             PipelineCache, RenderPassColorAttachment, RenderPassDescriptor,
             RenderPipelineDescriptor, SamplerBindingType, SamplerDescriptor, ShaderStages,
             SpecializedRenderPipeline, SpecializedRenderPipelines, TextureFormat,
             TextureSampleType,
-            binding_types::{sampler, texture_2d},
         },
         renderer::{RenderContext, RenderDevice},
         view::{ExtractedView, ViewTarget},
+        Render, RenderApp, RenderSet,
     },
 };
 use bevy_voronoi::prelude::*;
@@ -135,7 +135,6 @@ impl FromWorld for CompositePipeline {
                     ShaderStages::FRAGMENT,
                     (
                         texture_2d(TextureSampleType::Float { filterable: true }),
-                        texture_2d(TextureSampleType::Float { filterable: true }),
                         sampler(SamplerBindingType::Filtering),
                     ),
                 ),
@@ -221,11 +220,7 @@ impl ViewNode for CompositeNode {
         let bind_group = render_context.render_device().create_bind_group(
             "composite_bind_group",
             &composite_pipeline.layout,
-            &BindGroupEntries::sequential((
-                post_process.source,
-                &flood_textures.input().default_view,
-                &sampler,
-            )),
+            &BindGroupEntries::sequential((&flood_textures.input().default_view, &sampler)),
         );
 
         let mut pass = render_context.begin_tracked_render_pass(RenderPassDescriptor {

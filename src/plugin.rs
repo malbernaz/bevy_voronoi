@@ -34,7 +34,7 @@ pub struct Voronoi2dPlugin;
 impl Plugin for Voronoi2dPlugin {
     fn build(&self, app: &mut App) {
         load_internal_asset!(app, MASK_SHADER, "mask.wgsl", Shader::from_wgsl);
-        load_internal_asset!(app, FLOOD_INIT_SHADER, "flood_init.wgsl", Shader::from_wgsl);
+        load_internal_asset!(app, FLOOD_SEED_SHADER, "flood_seed.wgsl", Shader::from_wgsl);
         load_internal_asset!(app, FLOOD_SHADER, "flood.wgsl", Shader::from_wgsl);
 
         app.add_plugins(ExtractComponentPlugin::<VoronoiMaterial>::default());
@@ -148,7 +148,7 @@ fn queue_custom_meshes(
     flood_draw_functions: Res<DrawFunctions<MaskPhase>>,
     mut pipelines: ResMut<SpecializedMeshPipelines<MaskPipeline>>,
     pipeline_cache: Res<PipelineCache>,
-    flood_init_pipeline: Res<MaskPipeline>,
+    mask_pipeline: Res<MaskPipeline>,
     render_meshes: Res<RenderAssets<RenderMesh>>,
     mut render_mesh_instances: ResMut<RenderMesh2dInstances>,
     mut custom_render_phases: ResMut<ViewBinnedRenderPhases<MaskPhase>>,
@@ -182,7 +182,7 @@ fn queue_custom_meshes(
 
             let pipeline_id = pipelines.specialize(
                 &pipeline_cache,
-                &flood_init_pipeline,
+                &mask_pipeline,
                 view_key | Mesh2dPipelineKey::from_primitive_topology(mesh.primitive_topology()),
                 &mesh.layout,
             );
@@ -261,12 +261,12 @@ fn create_aux_texture(
 fn prepare_flood_textures(
     mut commands: Commands,
     view_query: Query<(Entity, &ViewTarget)>,
-    flood_init_phases: Res<ViewBinnedRenderPhases<MaskPhase>>,
+    flood_mask_phases: Res<ViewBinnedRenderPhases<MaskPhase>>,
     render_device: Res<RenderDevice>,
     mut texture_cache: ResMut<TextureCache>,
 ) {
     for (entity, view_target) in &view_query {
-        if !flood_init_phases.contains_key(&entity) {
+        if !flood_mask_phases.contains_key(&entity) {
             continue;
         }
 
@@ -304,49 +304,63 @@ impl ViewNode for FloodDrawNode {
         &self,
         graph: &mut RenderGraphContext,
         render_context: &mut RenderContext<'w>,
-        (camera, target, flood_textures): QueryItem<'w, Self::ViewQuery>,
+        (camera, target, voronoi_textures): QueryItem<'w, Self::ViewQuery>,
         world: &'w World,
     ) -> Result<(), NodeRunError> {
         let view_entity = graph.view_entity();
 
-        let mut flood_textures = flood_textures.clone();
+        let mut voronoi_textures = voronoi_textures.clone();
 
         run_mask_pass(
             world,
             render_context,
             &view_entity,
-            flood_textures.output(),
+            voronoi_textures.output(),
             camera,
         );
-        flood_textures.flip();
+        voronoi_textures.flip();
 
-        run_flood_init_pass(
+        run_flood_seed_pass(
             world,
             render_context,
             camera,
-            flood_textures.input(),
-            flood_textures.output(),
+            voronoi_textures.input(),
+            voronoi_textures.output(),
         );
-        flood_textures.flip();
+        voronoi_textures.flip();
 
-        let mut step = target
-            .main_texture()
-            .width()
-            .max(target.main_texture().height())
-            / 2;
+        let width = target.main_texture().width();
+        let height = target.main_texture().height();
+        let max_dim = width.max(height);
+        let mut step = max_dim / 2;
 
         while step >= 1 {
+            let x_step = (step * width) / max_dim;
+            let y_step = (step * height) / max_dim;
+
             run_flood_pass(
                 world,
                 render_context,
                 camera,
-                flood_textures.input(),
-                flood_textures.output(),
-                step,
+                voronoi_textures.input(),
+                voronoi_textures.output(),
+                UVec2::new(x_step.max(1), y_step.max(1)),
             );
-            flood_textures.flip();
+
+            voronoi_textures.flip();
             step /= 2;
         }
+
+        // Addicional pass with step = 1 to improve accuracy
+        run_flood_pass(
+            world,
+            render_context,
+            camera,
+            voronoi_textures.input(),
+            voronoi_textures.output(),
+            UVec2::new(1, 1),
+        );
+        voronoi_textures.flip();
 
         Ok(())
     }

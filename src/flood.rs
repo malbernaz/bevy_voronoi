@@ -16,23 +16,23 @@ use bevy::{
     },
 };
 
-pub const FLOOD_INIT_SHADER: Handle<Shader> =
+pub const FLOOD_SEED_SHADER: Handle<Shader> =
     Handle::weak_from_u128(42754076504256497540759847542693085498);
 pub const FLOOD_SHADER: Handle<Shader> =
     Handle::weak_from_u128(45315317095310548371056454467549270133);
 
 #[derive(Resource)]
 pub struct FloodPipeline {
-    pub init_layout: BindGroupLayout,
-    pub init_pipeline: CachedRenderPipelineId,
+    pub seed_layout: BindGroupLayout,
+    pub seed_pipeline: CachedRenderPipelineId,
     pub layout: BindGroupLayout,
     pub pipeline: CachedRenderPipelineId,
 }
 
 impl FromWorld for FloodPipeline {
     fn from_world(world: &mut World) -> Self {
-        let init_layout = world.resource::<RenderDevice>().create_bind_group_layout(
-            "flood_init_bind_group_layout",
+        let seed_layout = world.resource::<RenderDevice>().create_bind_group_layout(
+            "flood_seed_bind_group_layout",
             &BindGroupLayoutEntries::sequential(
                 ShaderStages::FRAGMENT,
                 (
@@ -42,15 +42,15 @@ impl FromWorld for FloodPipeline {
             ),
         );
 
-        let init_pipeline =
+        let seed_pipeline =
             world
                 .resource::<PipelineCache>()
                 .queue_render_pipeline(RenderPipelineDescriptor {
-                    label: Some("flood_init_pipeline".into()),
-                    layout: vec![init_layout.clone()],
+                    label: Some("flood_seed_pipeline".into()),
+                    layout: vec![seed_layout.clone()],
                     vertex: fullscreen_shader_vertex_state(),
                     fragment: Some(FragmentState {
-                        shader: FLOOD_INIT_SHADER,
+                        shader: FLOOD_SEED_SHADER,
                         shader_defs: vec![],
                         entry_point: "fragment".into(),
                         targets: vec![Some(ColorTargetState {
@@ -77,7 +77,7 @@ impl FromWorld for FloodPipeline {
                 (
                     texture_2d(TextureSampleType::Float { filterable: true }),
                     sampler(SamplerBindingType::Filtering),
-                    uniform_buffer::<u32>(false),
+                    uniform_buffer::<UVec2>(false),
                 ),
             ),
         );
@@ -111,15 +111,15 @@ impl FromWorld for FloodPipeline {
                 });
 
         Self {
-            init_pipeline,
-            init_layout,
+            seed_pipeline,
+            seed_layout,
             layout,
             pipeline,
         }
     }
 }
 
-pub fn run_flood_init_pass<'w>(
+pub fn run_flood_seed_pass<'w>(
     world: &'w World,
     render_context: &mut RenderContext<'w>,
     camera: &ExtractedCamera,
@@ -130,7 +130,7 @@ pub fn run_flood_init_pass<'w>(
 
     let Some(pipeline) = world
         .resource::<PipelineCache>()
-        .get_render_pipeline(flood_pipeline.init_pipeline)
+        .get_render_pipeline(flood_pipeline.seed_pipeline)
     else {
         return;
     };
@@ -140,13 +140,13 @@ pub fn run_flood_init_pass<'w>(
         .create_sampler(&SamplerDescriptor::default());
 
     let bind_group = render_context.render_device().create_bind_group(
-        "flood_init_bind_group",
-        &flood_pipeline.init_layout,
+        "flood_seed_bind_group",
+        &flood_pipeline.seed_layout,
         &BindGroupEntries::sequential((&input.default_view, &sampler)),
     );
 
     let mut pass = render_context.begin_tracked_render_pass(RenderPassDescriptor {
-        label: Some("flood_init_pass"),
+        label: Some("flood_seed_pass"),
         color_attachments: &[Some(RenderPassColorAttachment {
             view: &output.default_view,
             resolve_target: None,
@@ -170,7 +170,7 @@ pub fn run_flood_pass<'w>(
     camera: &ExtractedCamera,
     input: &CachedTexture,
     output: &CachedTexture,
-    step: u32,
+    step: UVec2,
 ) {
     let flood_pipeline = world.resource::<FloodPipeline>();
 

@@ -12,13 +12,13 @@ exclude = ["static/*"]
 
 [dependencies]
 bevy = { version = "0.15", default-features = false, features = [
-  "bevy_render",
   "bevy_core_pipeline",
   "bevy_winit",
   "bevy_sprite",
-  "x11",
-  "png",
 ] }
+
+[dev-dependencies]
+bevy = "0.15"
 
 [[example]]
 name = "sdf" 

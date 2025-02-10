@@ -111,7 +111,6 @@ impl FromWorld for CompositePipeline {
                     ShaderStages::FRAGMENT,
                     (
                         texture_2d(TextureSampleType::Float { filterable: true }),
-                        texture_2d(TextureSampleType::Float { filterable: true }),
                         sampler(SamplerBindingType::Filtering),
                     ),
                 ),
@@ -197,11 +196,7 @@ impl ViewNode for CompositeNode {
         let bind_group = render_context.render_device().create_bind_group(
             "composite_bind_group",
             &composite_pipeline.layout,
-            &BindGroupEntries::sequential((
-                post_process.source,
-                &voronoi_textures.input().default_view,
-                &sampler,
-            )),
+            &BindGroupEntries::sequential((&voronoi_textures.input().default_view, &sampler)),
         );
 
         let mut pass = render_context.begin_tracked_render_pass(RenderPassDescriptor {
