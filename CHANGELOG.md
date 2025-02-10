@@ -3,7 +3,7 @@
 ## 0.2.0
 
 ## Features
-- Proper signed distances (`VoronoiTexture` alpha channel indicates if distance is inside mask)
+- Proper signed distances (`VoronoiTexture`'s blue channel indicates if distance is inside mask)
 - Additional JFA pass to improve accuracy
 
 ## Breaking
