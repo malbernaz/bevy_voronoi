@@ -2,6 +2,7 @@ use std::ops::Range;
 
 use bevy::{
     asset::UntypedAssetId,
+    core_pipeline::core_2d::BatchSetKey2d,
     ecs::system::{lifetimeless::SRes, SystemParamItem},
     prelude::*,
     render::{
@@ -24,6 +25,7 @@ use bevy::{
         renderer::{RenderContext, RenderDevice},
         sync_world::{MainEntity, MainEntityHashMap},
         texture::{CachedTexture, FallbackImage, GpuImage},
+        view::RetainedViewEntity,
     },
     sprite::{
         DrawMesh2d, Mesh2dPipeline, Mesh2dPipelineKey, SetMesh2dBindGroup, SetMesh2dViewBindGroup,
@@ -93,7 +95,8 @@ impl SpecializedMeshPipeline for MaskPipeline {
 }
 
 pub struct MaskPhase {
-    pub key: MaskPhaseBinKey,
+    pub bin_key: MaskPhaseBinKey,
+    pub batch_set_key: BatchSetKey2d,
     pub representative_entity: (Entity, MainEntity),
     pub batch_range: Range<u32>,
     pub extra_index: PhaseItemExtraIndex,
@@ -119,7 +122,7 @@ impl PhaseItem for MaskPhase {
 
     #[inline]
     fn draw_function(&self) -> DrawFunctionId {
-        self.key.draw_function
+        self.bin_key.draw_function
     }
 
     #[inline]
@@ -133,7 +136,7 @@ impl PhaseItem for MaskPhase {
     }
 
     fn extra_index(&self) -> PhaseItemExtraIndex {
-        self.extra_index
+        self.extra_index.clone()
     }
 
     fn batch_range_and_extra_index_mut(&mut self) -> (&mut Range<u32>, &mut PhaseItemExtraIndex) {
@@ -142,16 +145,20 @@ impl PhaseItem for MaskPhase {
 }
 
 impl BinnedPhaseItem for MaskPhase {
+    type BatchSetKey = BatchSetKey2d;
+
     type BinKey = MaskPhaseBinKey;
 
     fn new(
-        key: Self::BinKey,
+        batch_set_key: Self::BatchSetKey,
+        bin_key: Self::BinKey,
         representative_entity: (Entity, MainEntity),
         batch_range: Range<u32>,
         extra_index: PhaseItemExtraIndex,
     ) -> Self {
         MaskPhase {
-            key,
+            bin_key,
+            batch_set_key,
             representative_entity,
             batch_range,
             extra_index,
@@ -162,7 +169,7 @@ impl BinnedPhaseItem for MaskPhase {
 impl CachedRenderPipelinePhaseItem for MaskPhase {
     #[inline]
     fn cached_pipeline(&self) -> CachedRenderPipelineId {
-        self.key.pipeline
+        self.bin_key.pipeline
     }
 }
 
@@ -229,6 +236,7 @@ impl<P: PhaseItem, const I: usize> RenderCommand<P> for SetMaskMaterialBindGroup
 pub fn run_mask_pass<'w>(
     world: &'w World,
     render_context: &mut RenderContext<'w>,
+    retained_view_entity: &RetainedViewEntity,
     view_entity: &Entity,
     output: &CachedTexture,
     camera: &ExtractedCamera,
@@ -238,7 +246,7 @@ pub fn run_mask_pass<'w>(
         return;
     };
 
-    let Some(phase) = mask_phases.get(view_entity) else {
+    let Some(phase) = mask_phases.get(retained_view_entity) else {
         error!("View MaskPhase not available");
         return;
     };
