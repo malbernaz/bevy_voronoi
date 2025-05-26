@@ -1,4 +1,5 @@
 use bevy::{
+    asset::weak_handle,
     core_pipeline::fullscreen_vertex_shader::fullscreen_shader_vertex_state,
     prelude::*,
     render::{
@@ -16,10 +17,8 @@ use bevy::{
     },
 };
 
-pub const FLOOD_SEED_SHADER: Handle<Shader> =
-    Handle::weak_from_u128(42754076504256497540759847542693085498);
-pub const FLOOD_SHADER: Handle<Shader> =
-    Handle::weak_from_u128(45315317095310548371056454467549270133);
+pub const FLOOD_SEED_SHADER: Handle<Shader> = weak_handle!("75d5b3e1-ce23-4fcf-8a24-91e9bd6eeed8");
+pub const FLOOD_SHADER: Handle<Shader> = weak_handle!("7ac1a62e-dd67-404f-a5f6-3633b8bdcbef");
 
 #[derive(Resource)]
 pub struct FloodPipeline {

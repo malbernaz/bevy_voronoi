@@ -1,7 +1,7 @@
 use std::ops::Range;
 
 use bevy::{
-    asset::UntypedAssetId,
+    asset::{weak_handle, UntypedAssetId},
     core_pipeline::core_2d::BatchSetKey2d,
     ecs::system::{lifetimeless::SRes, SystemParamItem},
     prelude::*,
@@ -34,8 +34,7 @@ use bevy::{
 
 use crate::plugin::RenderVoronoiMaterials;
 
-pub const MASK_SHADER: Handle<Shader> =
-    Handle::weak_from_u128(57844709471149694165463051306473017437);
+pub const MASK_SHADER: Handle<Shader> = weak_handle!("cd8c10c3-d6ad-4676-9cd8-22f2df16b00d");
 
 #[derive(Resource)]
 pub struct MaskPipeline {
