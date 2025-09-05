@@ -72,7 +72,7 @@ impl Plugin for Voronoi2dPlugin {
             .init_resource::<RenderVoronoiMaterials>()
             .init_resource::<MaskMaterialBindGroups>()
             .init_resource::<DrawFunctions<MaskPhase>>()
-            .init_resource::<ViewEntityRenderCache>()
+            .init_resource::<ViewEntitiesRenderCache>()
             .add_render_command::<MaskPhase, DrawMaskMesh>()
             .add_systems(
                 ExtractSchedule,
@@ -89,7 +89,8 @@ impl Plugin for Voronoi2dPlugin {
                         .in_set(RenderSet::PrepareMeshes)
                         .after(prepare_assets::<RenderMesh>),
                     queue_mask_meshes.in_set(RenderSet::QueueMeshes),
-                    (prepare_render_cache_state, prepare_flood_textures).in_set(RenderSet::Prepare),
+                    (prepare_view_entities_render_cache, prepare_flood_textures)
+                        .in_set(RenderSet::Prepare),
                     batch_and_prepare_binned_render_phase::<MaskPhase, Mesh2dPipeline>
                         .in_set(RenderSet::PrepareResources),
                     prepare_mask_material_bind_groups.in_set(RenderSet::PrepareBindGroups),
@@ -247,11 +248,11 @@ pub struct ViewEntityRenderState {
 }
 
 #[derive(Resource, Default, Deref, DerefMut)]
-pub struct ViewEntityRenderCache(MainEntityHashMap<ViewEntityRenderState>);
+pub struct ViewEntitiesRenderCache(MainEntityHashMap<ViewEntityRenderState>);
 
-impl ViewEntityRenderCache {
+impl ViewEntitiesRenderCache {
     pub fn update(&mut self, view_entity: &MainEntity, mut new_state: ViewEntityRenderState) {
-        if self.has_state_changed(view_entity, &new_state) {
+        if !self.contains_key(view_entity) || self.has_state_changed(view_entity, &new_state) {
             new_state.has_changed = true;
         }
         self.insert(*view_entity, new_state);
@@ -266,8 +267,7 @@ impl ViewEntityRenderCache {
             return true;
         };
 
-        !self.contains_key(view_entity)
-            || self.has_basic_state_changed(current_state, new_state)
+        self.has_basic_state_changed(current_state, new_state)
             || self.have_transforms_changed(current_state, new_state)
             || self.have_materials_changed(current_state, new_state)
     }
@@ -320,12 +320,12 @@ impl ViewEntityRenderCache {
     }
 }
 
-fn prepare_render_cache_state(
+fn prepare_view_entities_render_cache(
     render_voronoi_instances: Res<RenderVoronoiMaterials>,
     views: Query<(&MainEntity, &ExtractedView, &RenderVisibleEntities)>,
     mask_render_phases: Res<ViewBinnedRenderPhases<MaskPhase>>,
     render_mesh_instances: Res<RenderMesh2dInstances>,
-    mut view_entity_render_cache: ResMut<ViewEntityRenderCache>,
+    mut view_entities_render_cache: ResMut<ViewEntitiesRenderCache>,
 ) {
     if render_voronoi_instances.is_empty() {
         return;
@@ -341,7 +341,7 @@ fn prepare_render_cache_state(
     }
 
     // Retain only entries whose entities exist in the filtered views
-    view_entity_render_cache.retain(|entity, _| valid_view_entities.contains(entity));
+    view_entities_render_cache.retain(|entity, _| valid_view_entities.contains(entity));
 
     for (view_entity, view, visible_entities) in &views {
         if !valid_view_entities.contains(view_entity) {
@@ -376,7 +376,7 @@ fn prepare_render_cache_state(
         }
 
         // Update the cache with the new state for this view
-        view_entity_render_cache.update(view_entity, render_state);
+        view_entities_render_cache.update(view_entity, render_state);
     }
 }
 
@@ -643,7 +643,8 @@ impl ViewNode for FloodDrawNode {
     ) -> Result<(), NodeRunError> {
         let view_entity = graph.view_entity();
 
-        if let Some(render_cache_state) = world.resource::<ViewEntityRenderCache>().get(main_entity)
+        if let Some(render_cache_state) =
+            world.resource::<ViewEntitiesRenderCache>().get(main_entity)
         {
             if !render_cache_state.has_changed {
                 return Ok(());
