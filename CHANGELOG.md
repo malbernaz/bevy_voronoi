@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.0
+
+## Features
+- Bevy 0.16 support
+- Introduces a mandatory `VoronoiCamera` that can control the `VoronoiTexture` sampling factor
+- Expose original alpha mask on the alpha channel
+
+## Breaking
+- Since the original alpha mask is already exposed the blue channel is not used anymore
+
 ## 0.2.0
 
 ## Features
