@@ -3,6 +3,7 @@ use bevy::{
         core_2d::graph::{Core2d, Node2d},
         fullscreen_vertex_shader::fullscreen_shader_vertex_state,
     },
+    dev_tools::fps_overlay::{FpsOverlayConfig, FpsOverlayPlugin},
     ecs::{query::QueryItem, system::lifetimeless::Read},
     prelude::*,
     render::{
@@ -29,13 +30,28 @@ use bevy_voronoi::prelude::*;
 fn main() {
     App::new()
         .insert_resource(ClearColor(Color::NONE))
-        .add_plugins((DefaultPlugins, SdfPlugin))
+        .add_plugins((
+            DefaultPlugins.set(WindowPlugin {
+                primary_window: Some(Window {
+                    present_mode: bevy::window::PresentMode::Immediate,
+                    ..default()
+                }),
+                ..default()
+            }),
+            SdfPlugin,
+            FpsOverlayPlugin {
+                config: FpsOverlayConfig {
+                    enabled: true,
+                    ..default()
+                },
+            },
+        ))
         .add_systems(Startup, setup)
         .run();
 }
 
 fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, assets: Res<AssetServer>) {
-    commands.spawn(Camera2d);
+    commands.spawn((Camera2d, VoronoiCamera::default()));
 
     commands.spawn((
         Mesh2d(meshes.add(Rectangle::new(680., 252.))),

@@ -12,18 +12,18 @@ exclude = ["static/*"]
 
 [dependencies]
 bevy = { version = "0.16", default-features = false, features = [
-  "bevy_core_pipeline",
-  "bevy_winit",
-  "bevy_sprite",
+    "bevy_core_pipeline",
+    "bevy_winit",
+    "bevy_sprite",
 ] }
 
 [dev-dependencies]
-bevy = "0.16"
+bevy = { version = "0.16", features = ["bevy_dev_tools"] }
 
 [[example]]
-name = "sdf" 
+name = "sdf"
 path = "examples/sdf.rs"
 
 [[example]]
-name = "alpha_mask" 
+name = "alpha_mask"
 path = "examples/alpha_mask.rs"

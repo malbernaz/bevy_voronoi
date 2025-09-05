@@ -5,9 +5,11 @@ use bevy::{
         BatchSetKey2d,
     },
     ecs::{
+        entity::EntityHashMap,
         query::QueryItem,
         system::{lifetimeless::Read, SystemChangeTick},
     },
+    math::Affine3,
     platform::collections::HashSet,
     prelude::*,
     render::{
@@ -27,7 +29,7 @@ use bevy::{
             ViewBinnedRenderPhases,
         },
         render_resource::{
-            PipelineCache, SpecializedMeshPipelines, TextureDescriptor, TextureDimension,
+            Extent3d, PipelineCache, SpecializedMeshPipelines, TextureDescriptor, TextureDimension,
             TextureFormat, TextureUsages,
         },
         renderer::{RenderContext, RenderDevice},
@@ -54,6 +56,7 @@ impl Plugin for Voronoi2dPlugin {
         load_internal_asset!(app, FLOOD_SHADER, "flood.wgsl", Shader::from_wgsl);
 
         app.add_plugins(ExtractComponentPlugin::<VoronoiMaterial>::default())
+            .add_plugins(ExtractComponentPlugin::<VoronoiCamera>::default())
             .init_resource::<EntitiesNeedingSpecialization<VoronoiMaterial>>()
             .add_systems(PostUpdate, check_entities_needing_specialization);
 
@@ -69,12 +72,13 @@ impl Plugin for Voronoi2dPlugin {
             .init_resource::<RenderVoronoiMaterials>()
             .init_resource::<MaskMaterialBindGroups>()
             .init_resource::<DrawFunctions<MaskPhase>>()
+            .init_resource::<ViewEntityRenderCache>()
             .add_render_command::<MaskPhase, DrawMaskMesh>()
             .add_systems(
                 ExtractSchedule,
                 (
-                    extract_camera_phases,
-                    extract_entities_needs_specialization.after(extract_cameras),
+                    (extract_camera_phases, extract_entities_needs_specialization)
+                        .after(extract_cameras),
                     extract_flood_materials,
                 ),
             )
@@ -85,7 +89,7 @@ impl Plugin for Voronoi2dPlugin {
                         .in_set(RenderSet::PrepareMeshes)
                         .after(prepare_assets::<RenderMesh>),
                     queue_mask_meshes.in_set(RenderSet::QueueMeshes),
-                    prepare_flood_textures.in_set(RenderSet::Prepare),
+                    (prepare_render_cache_state, prepare_flood_textures).in_set(RenderSet::Prepare),
                     batch_and_prepare_binned_render_phase::<MaskPhase, Mesh2dPipeline>
                         .in_set(RenderSet::PrepareResources),
                     prepare_mask_material_bind_groups.in_set(RenderSet::PrepareBindGroups),
@@ -137,6 +141,17 @@ fn check_entities_needing_specialization(
     par_local.drain_into(&mut entities_needing_specialization);
 }
 
+#[derive(Component, ExtractComponent, Clone)]
+pub struct VoronoiCamera {
+    pub down_sample: u32,
+}
+
+impl Default for VoronoiCamera {
+    fn default() -> Self {
+        Self { down_sample: 2 }
+    }
+}
+
 #[derive(Component, ExtractComponent, Clone, Default)]
 pub struct VoronoiMaterial {
     pub alpha_mask: Handle<Image>,
@@ -164,7 +179,7 @@ impl From<&VoronoiMaterial> for AssetId<Image> {
 pub struct RenderVoronoiMaterials(MainEntityHashMap<AssetId<Image>>);
 
 fn extract_camera_phases(
-    cameras: Extract<Query<(Entity, &Camera), With<Camera2d>>>,
+    cameras: Extract<Query<(Entity, &Camera), (With<Camera2d>, With<VoronoiCamera>)>>,
     mut flood_phases: ResMut<ViewBinnedRenderPhases<MaskPhase>>,
     mut live_entities: Local<HashSet<RetainedViewEntity>>,
 ) {
@@ -210,20 +225,163 @@ fn extract_entities_needs_specialization(
 }
 
 fn extract_flood_materials(
-    mut material_instances: ResMut<RenderVoronoiMaterials>,
+    mut render_voronoi_instances: ResMut<RenderVoronoiMaterials>,
     query: Extract<Query<(Entity, &ViewVisibility, &VoronoiMaterial), With<Mesh2d>>>,
 ) {
-    material_instances.clear();
+    render_voronoi_instances.clear();
 
     for (entity, view_visibility, material) in &query {
         if view_visibility.get() {
-            material_instances.insert(entity.into(), material.into());
+            render_voronoi_instances.insert(entity.into(), material.into());
         }
     }
 }
 
+#[derive(Default)]
+pub struct ViewEntityRenderState {
+    pub camera_viewport: UVec4,
+    pub camera_transform: GlobalTransform,
+    pub entity_transforms: EntityHashMap<Affine3>,
+    pub material_assets: EntityHashMap<AssetId<Image>>,
+    pub has_changed: bool,
+}
+
+#[derive(Resource, Default, Deref, DerefMut)]
+pub struct ViewEntityRenderCache(MainEntityHashMap<ViewEntityRenderState>);
+
+impl ViewEntityRenderCache {
+    pub fn update(&mut self, view_entity: &MainEntity, mut new_state: ViewEntityRenderState) {
+        if self.has_state_changed(view_entity, &new_state) {
+            new_state.has_changed = true;
+        }
+        self.insert(*view_entity, new_state);
+    }
+
+    fn has_state_changed(
+        &self,
+        view_entity: &MainEntity,
+        new_state: &ViewEntityRenderState,
+    ) -> bool {
+        let Some(current_state) = self.get(view_entity) else {
+            return true;
+        };
+
+        !self.contains_key(view_entity)
+            || self.has_basic_state_changed(current_state, new_state)
+            || self.have_transforms_changed(current_state, new_state)
+            || self.have_materials_changed(current_state, new_state)
+    }
+
+    fn has_basic_state_changed(
+        &self,
+        current: &ViewEntityRenderState,
+        new: &ViewEntityRenderState,
+    ) -> bool {
+        current.camera_viewport != new.camera_viewport
+            || current.camera_transform != new.camera_transform
+            || current.entity_transforms.len() != new.entity_transforms.len()
+            || current.material_assets.len() != new.material_assets.len()
+    }
+
+    fn have_transforms_changed(
+        &self,
+        current: &ViewEntityRenderState,
+        new: &ViewEntityRenderState,
+    ) -> bool {
+        for (entity, new_transform) in &new.entity_transforms {
+            match current.entity_transforms.get(entity) {
+                None => return true,
+                Some(current_transform) => {
+                    if new_transform.matrix3 != current_transform.matrix3
+                        || new_transform.translation != current_transform.translation
+                    {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    }
+
+    fn have_materials_changed(
+        &self,
+        current: &ViewEntityRenderState,
+        new: &ViewEntityRenderState,
+    ) -> bool {
+        for (entity, new_material) in &new.material_assets {
+            if !current.material_assets.contains_key(entity)
+                || current.material_assets.get(entity).unwrap() != new_material
+            {
+                return true;
+            }
+        }
+
+        false
+    }
+}
+
+fn prepare_render_cache_state(
+    render_voronoi_instances: Res<RenderVoronoiMaterials>,
+    views: Query<(&MainEntity, &ExtractedView, &RenderVisibleEntities)>,
+    mask_render_phases: Res<ViewBinnedRenderPhases<MaskPhase>>,
+    render_mesh_instances: Res<RenderMesh2dInstances>,
+    mut view_entity_render_cache: ResMut<ViewEntityRenderCache>,
+) {
+    if render_voronoi_instances.is_empty() {
+        return;
+    }
+
+    // Pre-filter valid view entities to avoid repeated containment checks
+    let mut valid_view_entities = HashSet::new();
+    for (entity, _, _) in views
+        .iter()
+        .filter(|(_, view, _)| mask_render_phases.contains_key(&view.retained_view_entity))
+    {
+        valid_view_entities.insert(*entity);
+    }
+
+    // Retain only entries whose entities exist in the filtered views
+    view_entity_render_cache.retain(|entity, _| valid_view_entities.contains(entity));
+
+    for (view_entity, view, visible_entities) in &views {
+        if !valid_view_entities.contains(view_entity) {
+            continue;
+        }
+
+        let mut render_state = ViewEntityRenderState {
+            camera_viewport: view.viewport,
+            camera_transform: view.world_from_view,
+            entity_transforms: EntityHashMap::new(),
+            material_assets: EntityHashMap::new(),
+            has_changed: false,
+        };
+
+        for (entity, visible_entity) in visible_entities.iter::<Mesh2d>() {
+            let Some(mesh_instance) = render_mesh_instances.get(visible_entity) else {
+                continue;
+            };
+
+            render_state.entity_transforms.insert(
+                *entity,
+                Affine3 {
+                    ..mesh_instance.transforms.world_from_local
+                },
+            );
+
+            let Some(alpha_mask) = render_voronoi_instances.get(visible_entity) else {
+                continue;
+            };
+
+            render_state.material_assets.insert(*entity, *alpha_mask);
+        }
+
+        // Update the cache with the new state for this view
+        view_entity_render_cache.update(view_entity, render_state);
+    }
+}
+
 fn specialize_mask_meshes(
-    render_material_instances: Res<RenderVoronoiMaterials>,
+    render_voronoi_instances: Res<RenderVoronoiMaterials>,
     views: Query<(&MainEntity, &ExtractedView, &RenderVisibleEntities)>,
     mask_render_phases: ResMut<ViewBinnedRenderPhases<MaskPhase>>,
     view_key_cache: Res<ViewKeyCache>,
@@ -239,7 +397,7 @@ fn specialize_mask_meshes(
     mask_pipeline: Res<MaskPipeline>,
     mut mask_pipelines: ResMut<SpecializedMeshPipelines<MaskPipeline>>,
 ) {
-    if render_material_instances.is_empty() {
+    if render_voronoi_instances.is_empty() {
         return;
     }
 
@@ -258,7 +416,7 @@ fn specialize_mask_meshes(
             .or_default();
 
         for (_, visible_entity) in visible_entities.iter::<Mesh2d>() {
-            if render_material_instances.get(visible_entity).is_none() {
+            if render_voronoi_instances.get(visible_entity).is_none() {
                 continue;
             };
 
@@ -326,7 +484,7 @@ fn queue_mask_meshes(
             continue;
         };
 
-        let Some(flood_phase) = mask_render_phase.get_mut(&view.retained_view_entity) else {
+        let Some(mask_phase) = mask_render_phase.get_mut(&view.retained_view_entity) else {
             continue;
         };
 
@@ -340,7 +498,7 @@ fn queue_mask_meshes(
                 continue;
             };
 
-            if flood_phase.validate_cached_entity(*visible_entity, current_change_tick) {
+            if mask_phase.validate_cached_entity(*visible_entity, current_change_tick) {
                 continue;
             }
             let Some(mesh_instance) = render_mesh_instances.get_mut(visible_entity) else {
@@ -350,7 +508,7 @@ fn queue_mask_meshes(
                 continue;
             };
 
-            flood_phase.add(
+            mask_phase.add(
                 BatchSetKey2d {
                     indexed: mesh.indexed(),
                 },
@@ -406,12 +564,20 @@ fn create_aux_texture(
     texture_cache: &mut TextureCache,
     render_device: &RenderDevice,
     label: &'static str,
+    down_sample: u32,
 ) -> CachedTexture {
+    let size = view_target.main_texture().size();
+    let size = Extent3d {
+        width: size.width / down_sample,
+        height: size.height / down_sample,
+        depth_or_array_layers: size.depth_or_array_layers,
+    };
+
     texture_cache.get(
         render_device,
         TextureDescriptor {
             label: Some(label),
-            size: view_target.main_texture().size(),
+            size,
             mip_level_count: 1,
             sample_count: 1,
             dimension: TextureDimension::D2,
@@ -424,12 +590,12 @@ fn create_aux_texture(
 
 fn prepare_flood_textures(
     mut commands: Commands,
-    view_query: Query<(Entity, &ViewTarget, &ExtractedView)>,
+    view_query: Query<(Entity, &ViewTarget, &ExtractedView, &VoronoiCamera)>,
     flood_mask_phases: Res<ViewBinnedRenderPhases<MaskPhase>>,
     render_device: Res<RenderDevice>,
     mut texture_cache: ResMut<TextureCache>,
 ) {
-    for (entity, view_target, extracted_view) in &view_query {
+    for (entity, view_target, extracted_view, voronoi_camera) in &view_query {
         if !flood_mask_phases.contains_key(&extracted_view.retained_view_entity) {
             continue;
         }
@@ -441,12 +607,14 @@ fn prepare_flood_textures(
                 &mut texture_cache,
                 &render_device,
                 "flood_texture_a",
+                voronoi_camera.down_sample,
             ),
             texture_b: create_aux_texture(
                 view_target,
                 &mut texture_cache,
                 &render_device,
                 "flood_texture_b",
+                voronoi_camera.down_sample,
             ),
         });
     }
@@ -459,6 +627,7 @@ struct FloodDrawPassLabel;
 struct FloodDrawNode;
 impl ViewNode for FloodDrawNode {
     type ViewQuery = (
+        Read<MainEntity>,
         Read<ExtractedCamera>,
         Read<ExtractedView>,
         Read<ViewTarget>,
@@ -469,10 +638,17 @@ impl ViewNode for FloodDrawNode {
         &self,
         graph: &mut RenderGraphContext,
         render_context: &mut RenderContext<'w>,
-        (camera, view, target, voronoi_textures): QueryItem<'w, Self::ViewQuery>,
+        (main_entity, camera, view, target, voronoi_textures): QueryItem<'w, Self::ViewQuery>,
         world: &'w World,
     ) -> Result<(), NodeRunError> {
         let view_entity = graph.view_entity();
+
+        if let Some(render_cache_state) = world.resource::<ViewEntityRenderCache>().get(main_entity)
+        {
+            if !render_cache_state.has_changed {
+                return Ok(());
+            }
+        }
 
         let mut voronoi_textures = voronoi_textures.clone();
 

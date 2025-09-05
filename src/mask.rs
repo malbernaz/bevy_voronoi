@@ -95,7 +95,6 @@ impl SpecializedMeshPipeline for MaskPipeline {
 
 pub struct MaskPhase {
     pub bin_key: MaskPhaseBinKey,
-    pub batch_set_key: BatchSetKey2d,
     pub representative_entity: (Entity, MainEntity),
     pub batch_range: Range<u32>,
     pub extra_index: PhaseItemExtraIndex,
@@ -149,7 +148,7 @@ impl BinnedPhaseItem for MaskPhase {
     type BinKey = MaskPhaseBinKey;
 
     fn new(
-        batch_set_key: Self::BatchSetKey,
+        _batch_set_key: Self::BatchSetKey,
         bin_key: Self::BinKey,
         representative_entity: (Entity, MainEntity),
         batch_range: Range<u32>,
@@ -157,7 +156,6 @@ impl BinnedPhaseItem for MaskPhase {
     ) -> Self {
         MaskPhase {
             bin_key,
-            batch_set_key,
             representative_entity,
             batch_range,
             extra_index,
@@ -191,9 +189,11 @@ pub fn prepare_mask_material_bind_groups(
     flood_materials: Res<RenderVoronoiMaterials>,
     mut bind_groups: ResMut<MaskMaterialBindGroups>,
 ) {
-    bind_groups.clear();
+    // Only update bind groups for entities that have changed or are new
+    bind_groups.retain(|entity, _| flood_materials.contains_key(entity));
+
     for (entity, alpha_mask) in flood_materials.iter() {
-        let alpha_mask = if let Some(image) = images.get(*alpha_mask) {
+        let alpha_mask_image = if let Some(image) = images.get(*alpha_mask) {
             image
         } else {
             &fallback_image.d2
@@ -202,9 +202,8 @@ pub fn prepare_mask_material_bind_groups(
         let bind_group = render_device.create_bind_group(
             "mask_material_bind_group",
             &pipeline.material_layout,
-            &BindGroupEntries::sequential((&alpha_mask.texture_view, &sampler)),
+            &BindGroupEntries::sequential((&alpha_mask_image.texture_view, &sampler)),
         );
-        // TODO: this is creating bind groups for every render. make it more efficient.
         bind_groups.insert(*entity, bind_group);
     }
 }
