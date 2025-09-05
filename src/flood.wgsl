@@ -8,7 +8,7 @@
 fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
     let original_seed = textureSample(seed_texture, sampler_obj, in.uv);
 
-    if original_seed.w == 2. {
+    if original_seed.z == 1. {
         return original_seed;
     }
 
@@ -30,5 +30,5 @@ fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
         }
     }
 
-    return vec4<f32>(current_seed, original_seed.z, 1.);
+    return vec4<f32>(current_seed, 0.0, original_seed.w);
 }

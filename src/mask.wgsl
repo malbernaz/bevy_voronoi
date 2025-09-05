@@ -5,11 +5,11 @@
 
 @fragment
 fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
-    let alpha_mask = textureSample(alpha_texture, alpha_sampler, in.uv).a;
+    let mask = textureSample(alpha_texture, alpha_sampler, in.uv).a;
 
-    if alpha_mask <= 0. {
+    if mask <= 0. {
         discard;
     }
 
-    return vec4(1.);
+    return vec4(mask);
 }
