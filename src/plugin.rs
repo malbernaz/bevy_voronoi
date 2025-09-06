@@ -251,8 +251,15 @@ pub struct ViewEntityRenderState {
 pub struct ViewEntitiesRenderCache(MainEntityHashMap<ViewEntityRenderState>);
 
 impl ViewEntitiesRenderCache {
-    pub fn update(&mut self, view_entity: &MainEntity, mut new_state: ViewEntityRenderState) {
-        if !self.contains_key(view_entity) || self.has_state_changed(view_entity, &new_state) {
+    pub fn update(
+        &mut self,
+        view_entity: &MainEntity,
+        asset_server: &AssetServer,
+        mut new_state: ViewEntityRenderState,
+    ) {
+        if !self.contains_key(view_entity)
+            || self.has_state_changed(view_entity, &new_state, asset_server)
+        {
             new_state.has_changed = true;
         }
         self.insert(*view_entity, new_state);
@@ -262,6 +269,7 @@ impl ViewEntitiesRenderCache {
         &self,
         view_entity: &MainEntity,
         new_state: &ViewEntityRenderState,
+        asset_server: &AssetServer,
     ) -> bool {
         let Some(current_state) = self.get(view_entity) else {
             return true;
@@ -269,7 +277,7 @@ impl ViewEntitiesRenderCache {
 
         self.has_basic_state_changed(current_state, new_state)
             || self.have_transforms_changed(current_state, new_state)
-            || self.have_materials_changed(current_state, new_state)
+            || self.have_materials_changed(current_state, new_state, asset_server)
     }
 
     fn has_basic_state_changed(
@@ -307,10 +315,17 @@ impl ViewEntitiesRenderCache {
         &self,
         current: &ViewEntityRenderState,
         new: &ViewEntityRenderState,
+        asset_server: &AssetServer,
     ) -> bool {
-        for (entity, new_material) in &new.material_assets {
+        for (entity, alpha_image) in &new.material_assets {
+            if let Some(asset_state) = asset_server.get_load_state(alpha_image.clone()) {
+                if !asset_state.is_loaded() {
+                    return true;
+                }
+            }
+
             if !current.material_assets.contains_key(entity)
-                || current.material_assets.get(entity).unwrap() != new_material
+                || current.material_assets.get(entity).unwrap() != alpha_image
             {
                 return true;
             }
@@ -326,6 +341,7 @@ fn prepare_view_entities_render_cache(
     mask_render_phases: Res<ViewBinnedRenderPhases<MaskPhase>>,
     render_mesh_instances: Res<RenderMesh2dInstances>,
     mut view_entities_render_cache: ResMut<ViewEntitiesRenderCache>,
+    asset_server: Res<AssetServer>,
 ) {
     if render_voronoi_instances.is_empty() {
         return;
@@ -376,7 +392,7 @@ fn prepare_view_entities_render_cache(
         }
 
         // Update the cache with the new state for this view
-        view_entities_render_cache.update(view_entity, render_state);
+        view_entities_render_cache.update(view_entity, &asset_server, render_state);
     }
 }
 
