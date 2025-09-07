@@ -2,7 +2,7 @@
 name = "bevy_voronoi"
 description = "A low-level Bevy library to generate Voronoi diagrams from 2d meshes"
 categories = ["graphics", "game-development", "game-engines", "rendering"]
-version = "0.3.1"
+version = "0.4.0"
 authors = ["Miguel Albernaz"]
 repository = "https://github.com/malbernaz/bevy_voronoi"
 license = "MIT"

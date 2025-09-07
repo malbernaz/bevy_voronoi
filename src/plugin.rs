@@ -144,12 +144,12 @@ fn check_entities_needing_specialization(
 
 #[derive(Component, ExtractComponent, Clone)]
 pub struct VoronoiCamera {
-    pub down_sample: u32,
+    pub scale: f32,
 }
 
 impl Default for VoronoiCamera {
     fn default() -> Self {
-        Self { down_sample: 2 }
+        Self { scale: 0.5 }
     }
 }
 
@@ -580,12 +580,12 @@ fn create_aux_texture(
     texture_cache: &mut TextureCache,
     render_device: &RenderDevice,
     label: &'static str,
-    down_sample: u32,
+    scale: f32,
 ) -> CachedTexture {
     let size = view_target.main_texture().size();
     let size = Extent3d {
-        width: size.width / down_sample,
-        height: size.height / down_sample,
+        width: (size.width as f32 * scale) as u32,
+        height: (size.height as f32 * scale) as u32,
         depth_or_array_layers: size.depth_or_array_layers,
     };
 
@@ -623,14 +623,14 @@ fn prepare_flood_textures(
                 &mut texture_cache,
                 &render_device,
                 "flood_texture_a",
-                voronoi_camera.down_sample,
+                voronoi_camera.scale,
             ),
             texture_b: create_aux_texture(
                 view_target,
                 &mut texture_cache,
                 &render_device,
                 "flood_texture_b",
-                voronoi_camera.down_sample,
+                voronoi_camera.scale,
             ),
         });
     }

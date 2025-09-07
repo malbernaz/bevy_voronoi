@@ -1,6 +1,9 @@
 # Changelog
 
-## 0.3.1
+## 0.4
+
+## Breaking
+- replace property `down_sample` for `scale` for clarity.
 
 ## Fix
 - make sure the alpha mask is loaded
