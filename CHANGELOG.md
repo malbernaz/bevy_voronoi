@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.4
+## 0.4.0
 
 ## Breaking
 - replace property `down_sample` for `scale` for clarity.

@@ -20,5 +20,5 @@ See the examples folder for usage details.
 
 | bevy   | bevy_voronoi |
 | ------ | ------------ |
-| `0.16` | `0.3`        |
+| `0.16` | `0.3..0.4`   |
 | `0.15` | `0.1..0.2`   |
