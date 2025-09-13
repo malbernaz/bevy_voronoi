@@ -12,9 +12,10 @@ use bevy::{
             TextureFormat, TextureSampleType, UniformBuffer,
         },
         renderer::{RenderContext, RenderDevice, RenderQueue},
-        texture::CachedTexture,
     },
 };
+
+use crate::plugin::VoronoiTexture;
 
 #[derive(Resource)]
 pub struct FloodPipeline {
@@ -118,8 +119,7 @@ pub fn run_flood_seed_pass<'w>(
     world: &'w World,
     render_context: &mut RenderContext<'w>,
     camera: &ExtractedCamera,
-    input: &CachedTexture,
-    output: &CachedTexture,
+    voronoi_texture: &mut VoronoiTexture,
 ) {
     let flood_pipeline = world.resource::<FloodPipeline>();
 
@@ -137,13 +137,13 @@ pub fn run_flood_seed_pass<'w>(
     let bind_group = render_context.render_device().create_bind_group(
         "flood_seed_bind_group",
         &flood_pipeline.seed_layout,
-        &BindGroupEntries::sequential((&input.default_view, &sampler)),
+        &BindGroupEntries::sequential((&voronoi_texture.input().default_view, &sampler)),
     );
 
     let mut pass = render_context.begin_tracked_render_pass(RenderPassDescriptor {
         label: Some("flood_seed_pass"),
         color_attachments: &[Some(RenderPassColorAttachment {
-            view: &output.default_view,
+            view: &voronoi_texture.output().default_view,
             resolve_target: None,
             ops: Operations::default(),
             depth_slice: None,
@@ -158,14 +158,15 @@ pub fn run_flood_seed_pass<'w>(
     pass.set_render_pipeline(pipeline);
     pass.set_bind_group(0, &bind_group, &[]);
     pass.draw(0..3, 0..1);
+
+    voronoi_texture.flip();
 }
 
 pub fn run_flood_pass<'w>(
     world: &'w World,
     render_context: &mut RenderContext<'w>,
     camera: &ExtractedCamera,
-    input: &CachedTexture,
-    output: &CachedTexture,
+    voronoi_texture: &mut VoronoiTexture,
     step: UVec2,
 ) {
     let flood_pipeline = world.resource::<FloodPipeline>();
@@ -193,13 +194,13 @@ pub fn run_flood_pass<'w>(
     let bind_group = render_context.render_device().create_bind_group(
         "flood_bind_group",
         &flood_pipeline.layout,
-        &BindGroupEntries::sequential((&input.default_view, &sampler, step)),
+        &BindGroupEntries::sequential((&voronoi_texture.input().default_view, &sampler, step)),
     );
 
     let mut pass = render_context.begin_tracked_render_pass(RenderPassDescriptor {
         label: Some("flood_pass"),
         color_attachments: &[Some(RenderPassColorAttachment {
-            view: &output.default_view,
+            view: &voronoi_texture.output().default_view,
             resolve_target: None,
             ops: Operations::default(),
             depth_slice: None,
@@ -214,4 +215,6 @@ pub fn run_flood_pass<'w>(
     pass.set_render_pipeline(pipeline);
     pass.set_bind_group(0, &bind_group, &[]);
     pass.draw(0..3, 0..1);
+
+    voronoi_texture.flip();
 }

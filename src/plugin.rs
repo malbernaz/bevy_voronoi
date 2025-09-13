@@ -413,19 +413,11 @@ impl ViewNode for VoronoiDrawNode {
             render_context,
             mask_phase,
             &view_entity,
-            voronoi_texture.output(),
+            &mut voronoi_texture,
             camera,
         );
-        voronoi_texture.flip();
 
-        run_flood_seed_pass(
-            world,
-            render_context,
-            camera,
-            voronoi_texture.input(),
-            voronoi_texture.output(),
-        );
-        voronoi_texture.flip();
+        run_flood_seed_pass(world, render_context, camera, &mut voronoi_texture);
 
         let width = target.main_texture().width();
         let height = target.main_texture().height();
@@ -440,12 +432,10 @@ impl ViewNode for VoronoiDrawNode {
                 world,
                 render_context,
                 camera,
-                voronoi_texture.input(),
-                voronoi_texture.output(),
+                &mut voronoi_texture,
                 UVec2::new(x_step.max(1), y_step.max(1)),
             );
 
-            voronoi_texture.flip();
             step /= 2;
         }
 
@@ -454,8 +444,7 @@ impl ViewNode for VoronoiDrawNode {
             world,
             render_context,
             camera,
-            voronoi_texture.input(),
-            voronoi_texture.output(),
+            &mut voronoi_texture,
             UVec2::new(1, 1),
         );
         voronoi_texture.flip();

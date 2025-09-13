@@ -24,7 +24,7 @@ use bevy::{
         },
         renderer::{RenderContext, RenderDevice},
         sync_world::{MainEntity, MainEntityHashMap},
-        texture::{CachedTexture, FallbackImage, GpuImage},
+        texture::{FallbackImage, GpuImage},
         view::RetainedViewEntity,
         Extract,
     },
@@ -33,7 +33,7 @@ use bevy::{
     },
 };
 
-use crate::plugin::{RenderVoronoiMaterials, VoronoiView};
+use crate::plugin::{RenderVoronoiMaterials, VoronoiTexture, VoronoiView};
 
 #[derive(Resource)]
 pub struct MaskPipeline {
@@ -257,13 +257,13 @@ pub fn run_mask_pass<'w>(
     render_context: &mut RenderContext<'w>,
     phase: &SortedRenderPhase<MaskPhase>,
     view_entity: &Entity,
-    output: &CachedTexture,
+    voronoi_texture: &mut VoronoiTexture,
     camera: &ExtractedCamera,
 ) {
     let mut pass = render_context.begin_tracked_render_pass(RenderPassDescriptor {
         label: Some("mask_pass"),
         color_attachments: &[Some(RenderPassColorAttachment {
-            view: &output.default_view,
+            view: &voronoi_texture.output().default_view,
             resolve_target: None,
             ops: Operations::default(),
             depth_slice: None,
@@ -278,4 +278,6 @@ pub fn run_mask_pass<'w>(
     if let Err(err) = phase.render(&mut pass, world, *view_entity) {
         error!("Error encountered while rendering the voronoi mask phase {err:?}");
     }
+
+    voronoi_texture.flip();
 }
