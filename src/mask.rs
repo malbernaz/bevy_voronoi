@@ -8,60 +8,41 @@ use bevy::{
     prelude::*,
     render::{
         camera::ExtractedCamera,
+        mesh::RenderMesh,
         render_asset::RenderAssets,
         render_phase::{
-            CachedRenderPipelinePhaseItem, DrawFunctionId, PhaseItem, PhaseItemExtraIndex,
-            RenderCommand, RenderCommandResult, SetItemPipeline, SortedPhaseItem,
-            SortedRenderPhase, TrackedRenderPass, ViewSortedRenderPhases,
+            CachedRenderPipelinePhaseItem, DrawFunctionId, DrawFunctions, PhaseItem,
+            PhaseItemExtraIndex, RenderCommand, RenderCommandResult, SetItemPipeline,
+            SortedPhaseItem, SortedRenderPhase, TrackedRenderPass, ViewSortedRenderPhases,
         },
         render_resource::{
             binding_types::{sampler, texture_2d},
             BindGroup, BindGroupEntries, BindGroupLayout, BindGroupLayoutEntries,
             CachedRenderPipelineId, ColorTargetState, ColorWrites, FragmentState, Operations,
-            RenderPassColorAttachment, RenderPassDescriptor, RenderPipelineDescriptor,
-            SamplerBindingType, SamplerDescriptor, ShaderStages, SpecializedMeshPipeline,
-            SpecializedMeshPipelineError, TextureFormat, TextureSampleType,
+            PipelineCache, RenderPassColorAttachment, RenderPassDescriptor,
+            RenderPipelineDescriptor, SamplerBindingType, SamplerDescriptor, ShaderStages,
+            SpecializedMeshPipeline, SpecializedMeshPipelineError, SpecializedMeshPipelines,
+            TextureFormat, TextureSampleType,
         },
         renderer::{RenderContext, RenderDevice},
         sync_world::{MainEntity, MainEntityHashMap},
         texture::{FallbackImage, GpuImage},
-        view::RetainedViewEntity,
+        view::{ExtractedView, RenderVisibleEntities, RetainedViewEntity},
         Extract,
     },
     sprite_render::{
-        DrawMesh2d, Mesh2dPipeline, Mesh2dPipelineKey, SetMesh2dBindGroup, SetMesh2dViewBindGroup,
+        DrawMesh2d, Mesh2dPipeline, Mesh2dPipelineKey, RenderMesh2dInstances, SetMesh2dBindGroup,
+        SetMesh2dViewBindGroup, ViewKeyCache,
     },
 };
 
-use crate::plugin::{RenderVoronoiMaterials, VoronoiTexture, VoronoiView};
+use crate::plugin::{RenderVoronoiMaterials, VoronoiTexture, VoronoiView, VoronoiViewNeedsUpdate};
 
 #[derive(Resource)]
 pub struct MaskPipeline {
     pub mesh_pipeline: Mesh2dPipeline,
     pub material_layout: BindGroupLayout,
     pub shader: Handle<Shader>,
-}
-
-pub fn init_mask_pipeline(
-    mut commands: Commands,
-    render_device: Res<RenderDevice>,
-    mesh_2d_pipeline: Res<Mesh2dPipeline>,
-    asset_server: Res<AssetServer>,
-) {
-    commands.insert_resource(MaskPipeline {
-        mesh_pipeline: mesh_2d_pipeline.clone(),
-        shader: asset_server.load("embedded://bevy_voronoi/mask.wgsl"),
-        material_layout: render_device.create_bind_group_layout(
-            "mask_material_bind_group_layout",
-            &BindGroupLayoutEntries::sequential(
-                ShaderStages::FRAGMENT,
-                (
-                    texture_2d(TextureSampleType::Float { filterable: true }),
-                    sampler(SamplerBindingType::Filtering),
-                ),
-            ),
-        ),
-    });
 }
 
 impl SpecializedMeshPipeline for MaskPipeline {
@@ -95,6 +76,28 @@ impl SpecializedMeshPipeline for MaskPipeline {
             ..descriptor
         })
     }
+}
+
+pub fn init_mask_pipeline(
+    mut commands: Commands,
+    render_device: Res<RenderDevice>,
+    mesh_2d_pipeline: Res<Mesh2dPipeline>,
+    asset_server: Res<AssetServer>,
+) {
+    commands.insert_resource(MaskPipeline {
+        mesh_pipeline: mesh_2d_pipeline.clone(),
+        shader: asset_server.load("embedded://bevy_voronoi/mask.wgsl"),
+        material_layout: render_device.create_bind_group_layout(
+            "mask_material_bind_group_layout",
+            &BindGroupLayoutEntries::sequential(
+                ShaderStages::FRAGMENT,
+                (
+                    texture_2d(TextureSampleType::Float { filterable: true }),
+                    sampler(SamplerBindingType::Filtering),
+                ),
+            ),
+        ),
+    });
 }
 
 pub struct MaskPhase {
@@ -191,13 +194,68 @@ pub fn extract_mask_phases(
     mask_phases.retain(|camera_entity, _| live_entities.contains(camera_entity));
 }
 
-pub type DrawMaskMesh = (
-    SetItemPipeline,
-    SetMesh2dViewBindGroup<0>,
-    SetMesh2dBindGroup<1>,
-    SetMaskMaterialBindGroup<2>,
-    DrawMesh2d,
-);
+pub fn queue_mask_meshes(
+    mask_draw_functions: Res<DrawFunctions<MaskPhase>>,
+    render_meshes: Res<RenderAssets<RenderMesh>>,
+    pipeline_cache: Res<PipelineCache>,
+    mut render_mesh_instances: ResMut<RenderMesh2dInstances>,
+    mut mask_render_phase: ResMut<ViewSortedRenderPhases<MaskPhase>>,
+    mut mask_pipelines: ResMut<SpecializedMeshPipelines<MaskPipeline>>,
+    mask_pipeline: Res<MaskPipeline>,
+    view_key_cache: Res<ViewKeyCache>,
+    views: Query<
+        (&MainEntity, &ExtractedView, &RenderVisibleEntities),
+        With<VoronoiViewNeedsUpdate>,
+    >,
+    render_material_instances: Res<RenderVoronoiMaterials>,
+) {
+    if render_material_instances.is_empty() {
+        return;
+    }
+
+    for (view_entity, view, visible_entities) in &views {
+        let Some(view_key) = view_key_cache.get(view_entity) else {
+            continue;
+        };
+
+        let Some(mask_phase) = mask_render_phase.get_mut(&view.retained_view_entity) else {
+            continue;
+        };
+
+        let draw_mask_mesh = mask_draw_functions.read().id::<DrawMaskMesh>();
+
+        for (render_entity, visible_entity) in visible_entities.iter::<Mesh2d>() {
+            let Some(mesh_instance) = render_mesh_instances.get_mut(visible_entity) else {
+                continue;
+            };
+            let Some(mesh) = render_meshes.get(mesh_instance.mesh_asset_id) else {
+                continue;
+            };
+            let pipeline_id = mask_pipelines.specialize(
+                &pipeline_cache,
+                &mask_pipeline,
+                *view_key | Mesh2dPipelineKey::from_primitive_topology(mesh.primitive_topology()),
+                &mesh.layout,
+            );
+            let pipeline_id = match pipeline_id {
+                Ok(id) => id,
+                Err(err) => {
+                    error!("{}", err);
+                    continue;
+                }
+            };
+            mask_phase.add(MaskPhase {
+                sort_key: FloatOrd(mesh_instance.transforms.world_from_local.translation.z),
+                pipeline: pipeline_id,
+                draw_function: draw_mask_mesh,
+                entity: (*render_entity, *visible_entity),
+                batch_range: 0..1,
+                extra_index: PhaseItemExtraIndex::None,
+                indexed: mesh.indexed(),
+            });
+        }
+    }
+}
 
 #[derive(Resource, Deref, DerefMut, Default)]
 pub struct MaskMaterialBindGroups(MainEntityHashMap<BindGroup>);
@@ -228,6 +286,14 @@ pub fn prepare_mask_material_bind_groups(
         bind_groups.insert(*entity, bind_group);
     }
 }
+
+pub type DrawMaskMesh = (
+    SetItemPipeline,
+    SetMesh2dViewBindGroup<0>,
+    SetMesh2dBindGroup<1>,
+    SetMaskMaterialBindGroup<2>,
+    DrawMesh2d,
+);
 
 pub struct SetMaskMaterialBindGroup<const I: usize>;
 impl<P: PhaseItem, const I: usize> RenderCommand<P> for SetMaskMaterialBindGroup<I> {

@@ -5,35 +5,27 @@ use bevy::{
     camera::visibility::VisibleEntities,
     core_pipeline::core_2d::graph::{Core2d, Node2d},
     ecs::{query::QueryItem, system::lifetimeless::Read},
-    math::FloatOrd,
     platform::collections::{HashMap, HashSet},
     prelude::*,
     render::{
         batching::no_gpu_preprocessing::batch_and_prepare_sorted_render_phase,
         camera::{extract_cameras, ExtractedCamera},
         extract_component::{ExtractComponent, ExtractComponentPlugin},
-        mesh::RenderMesh,
-        render_asset::RenderAssets,
         render_graph::{
             NodeRunError, RenderGraphContext, RenderGraphExt, RenderLabel, ViewNode, ViewNodeRunner,
         },
-        render_phase::{
-            AddRenderCommand, DrawFunctions, PhaseItemExtraIndex, ViewSortedRenderPhases,
-        },
+        render_phase::{AddRenderCommand, DrawFunctions, ViewSortedRenderPhases},
         render_resource::{
-            Extent3d, PipelineCache, SpecializedMeshPipelines, TextureDescriptor, TextureDimension,
-            TextureFormat, TextureUsages,
+            Extent3d, SpecializedMeshPipelines, TextureDescriptor, TextureDimension, TextureFormat,
+            TextureUsages,
         },
         renderer::{RenderContext, RenderDevice},
-        sync_world::{MainEntity, MainEntityHashMap},
+        sync_world::MainEntityHashMap,
         texture::{CachedTexture, TextureCache},
-        view::{ExtractedView, RenderVisibleEntities, RetainedViewEntity, ViewTarget},
+        view::{ExtractedView, RetainedViewEntity, ViewTarget},
         Extract, Render, RenderApp, RenderStartup, RenderSystems,
     },
-    sprite_render::{
-        init_mesh_2d_pipeline, Mesh2dPipeline, Mesh2dPipelineKey, RenderMesh2dInstances,
-        ViewKeyCache,
-    },
+    sprite_render::{init_mesh_2d_pipeline, Mesh2dPipeline},
 };
 
 use crate::{flood::*, mask::*};
@@ -103,15 +95,11 @@ impl Plugin for Voronoi2dPlugin {
 #[derive(Component, ExtractComponent, Clone, PartialEq)]
 pub struct VoronoiView {
     pub scale: f32,
-    pub target: Handle<Image>,
 }
 
 impl Default for VoronoiView {
     fn default() -> Self {
-        Self {
-            scale: 0.5,
-            target: default(),
-        }
+        Self { scale: 0.5 }
     }
 }
 
@@ -139,7 +127,7 @@ impl From<&VoronoiMaterial> for AssetId<Image> {
 }
 
 #[derive(Component, Clone, ExtractComponent)]
-struct VoronoiViewNeedsUpdate;
+pub struct VoronoiViewNeedsUpdate;
 
 fn check_voronoi_views_needing_update(
     mut commands: Commands,
@@ -197,69 +185,6 @@ fn extract_voronoi_materials(
     for (entity, view_visibility, material) in &query {
         if view_visibility.get() {
             render_voronoi_instances.insert(entity.into(), material.into());
-        }
-    }
-}
-
-fn queue_mask_meshes(
-    mask_draw_functions: Res<DrawFunctions<MaskPhase>>,
-    render_meshes: Res<RenderAssets<RenderMesh>>,
-    pipeline_cache: Res<PipelineCache>,
-    mut render_mesh_instances: ResMut<RenderMesh2dInstances>,
-    mut mask_render_phase: ResMut<ViewSortedRenderPhases<MaskPhase>>,
-    mut mask_pipelines: ResMut<SpecializedMeshPipelines<MaskPipeline>>,
-    mask_pipeline: Res<MaskPipeline>,
-    view_key_cache: Res<ViewKeyCache>,
-    views: Query<
-        (&MainEntity, &ExtractedView, &RenderVisibleEntities),
-        With<VoronoiViewNeedsUpdate>,
-    >,
-    render_material_instances: Res<RenderVoronoiMaterials>,
-) {
-    if render_material_instances.is_empty() {
-        return;
-    }
-
-    for (view_entity, view, visible_entities) in &views {
-        let Some(view_key) = view_key_cache.get(view_entity) else {
-            continue;
-        };
-
-        let Some(mask_phase) = mask_render_phase.get_mut(&view.retained_view_entity) else {
-            continue;
-        };
-
-        let draw_mask_mesh = mask_draw_functions.read().id::<DrawMaskMesh>();
-
-        for (render_entity, visible_entity) in visible_entities.iter::<Mesh2d>() {
-            let Some(mesh_instance) = render_mesh_instances.get_mut(visible_entity) else {
-                continue;
-            };
-            let Some(mesh) = render_meshes.get(mesh_instance.mesh_asset_id) else {
-                continue;
-            };
-            let pipeline_id = mask_pipelines.specialize(
-                &pipeline_cache,
-                &mask_pipeline,
-                *view_key | Mesh2dPipelineKey::from_primitive_topology(mesh.primitive_topology()),
-                &mesh.layout,
-            );
-            let pipeline_id = match pipeline_id {
-                Ok(id) => id,
-                Err(err) => {
-                    error!("{}", err);
-                    continue;
-                }
-            };
-            mask_phase.add(MaskPhase {
-                sort_key: FloatOrd(mesh_instance.transforms.world_from_local.translation.z),
-                pipeline: pipeline_id,
-                draw_function: draw_mask_mesh,
-                entity: (*render_entity, *visible_entity),
-                batch_range: 0..1,
-                extra_index: PhaseItemExtraIndex::None,
-                indexed: mesh.indexed(),
-            });
         }
     }
 }
