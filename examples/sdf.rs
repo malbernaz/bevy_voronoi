@@ -1,15 +1,14 @@
+use bevy::core_pipeline::FullscreenShader;
+use bevy::dev_tools::fps_overlay::FrameTimeGraphConfig;
 use bevy::{
-    core_pipeline::{
-        core_2d::graph::{Core2d, Node2d},
-        fullscreen_vertex_shader::fullscreen_shader_vertex_state,
-    },
+    core_pipeline::core_2d::graph::{Core2d, Node2d},
     dev_tools::fps_overlay::{FpsOverlayConfig, FpsOverlayPlugin},
     ecs::{query::QueryItem, system::lifetimeless::Read},
     prelude::*,
     render::{
         camera::ExtractedCamera,
         render_graph::{
-            NodeRunError, RenderGraphApp, RenderGraphContext, RenderLabel, ViewNode, ViewNodeRunner,
+            NodeRunError, RenderGraphContext, RenderGraphExt, RenderLabel, ViewNode, ViewNodeRunner,
         },
         render_resource::{
             binding_types::{sampler, texture_2d},
@@ -22,7 +21,7 @@ use bevy::{
         },
         renderer::{RenderContext, RenderDevice},
         view::{ExtractedView, ViewTarget},
-        Render, RenderApp, RenderSet,
+        Render, RenderApp, RenderSystems,
     },
 };
 use bevy_voronoi::prelude::*;
@@ -41,6 +40,10 @@ fn main() {
             SdfPlugin,
             FpsOverlayPlugin {
                 config: FpsOverlayConfig {
+                    frame_time_graph_config: FrameTimeGraphConfig {
+                        enabled: false,
+                        ..default()
+                    },
                     enabled: true,
                     ..default()
                 },
@@ -53,7 +56,13 @@ fn main() {
 const X_EXTENT: f32 = 800.;
 
 fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>) {
-    commands.spawn((Camera2d, VoronoiCamera::default()));
+    commands.spawn((
+        Camera2d,
+        VoronoiView {
+            scale: 1.0,
+            ..default()
+        },
+    ));
 
     let shapes = [
         meshes.add(Circle::new(50.0)),
@@ -84,7 +93,6 @@ fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>) {
 }
 
 struct SdfPlugin;
-
 impl Plugin for SdfPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(Voronoi2dPlugin);
@@ -97,7 +105,7 @@ impl Plugin for SdfPlugin {
             .init_resource::<SpecializedRenderPipelines<CompositePipeline>>()
             .add_systems(
                 Render,
-                prepare_composite_pipeline.in_set(RenderSet::Prepare),
+                prepare_composite_pipeline.in_set(RenderSystems::Prepare),
             )
             .add_render_graph_node::<ViewNodeRunner<CompositeNode>>(Core2d, CompositePassLabel)
             .add_render_graph_edges(Core2d, (Node2d::EndMainPass, CompositePassLabel));
@@ -138,12 +146,15 @@ pub struct ViewCompositePipelineId(pub CachedRenderPipelineId);
 #[derive(Resource)]
 pub struct CompositePipeline {
     pub shader: Handle<Shader>,
+    pub fullscreen_shader: FullscreenShader,
     pub layout: BindGroupLayout,
 }
 
 impl FromWorld for CompositePipeline {
     fn from_world(world: &mut World) -> Self {
+        let fullscreen_shader = world.resource::<FullscreenShader>();
         Self {
+            fullscreen_shader: fullscreen_shader.clone(),
             shader: world.resource::<AssetServer>().load("composite.wgsl"),
             layout: world.resource::<RenderDevice>().create_bind_group_layout(
                 "composite_bind_group_layout",
@@ -172,7 +183,7 @@ impl SpecializedRenderPipeline for CompositePipeline {
             label: Some("composite_pipeline".into()),
             layout: vec![self.layout.clone()],
             push_constant_ranges: vec![],
-            vertex: fullscreen_shader_vertex_state(),
+            vertex: self.fullscreen_shader.to_vertex_state(),
             primitive: Default::default(),
             depth_stencil: None,
             multisample: MultisampleState {
@@ -183,7 +194,7 @@ impl SpecializedRenderPipeline for CompositePipeline {
             fragment: Some(FragmentState {
                 shader: self.shader.clone(),
                 shader_defs: vec![],
-                entry_point: "fragment".into(),
+                entry_point: Some("fragment".into()),
                 targets: vec![Some(ColorTargetState {
                     format: if key.hdr {
                         ViewTarget::TEXTURE_FORMAT_HDR
@@ -207,8 +218,8 @@ struct CompositeNode;
 impl ViewNode for CompositeNode {
     type ViewQuery = (
         Read<ExtractedCamera>,
+        Read<ExtractedView>,
         Read<ViewTarget>,
-        Read<VoronoiTexture>,
         Read<ViewCompositePipelineId>,
     );
 
@@ -216,7 +227,7 @@ impl ViewNode for CompositeNode {
         &self,
         _: &mut RenderGraphContext,
         render_context: &mut RenderContext<'w>,
-        (camera, target, flood_textures, composite_pipeline_id): QueryItem<'w, Self::ViewQuery>,
+        (camera, view, target, composite_pipeline_id): QueryItem<'w, '_, Self::ViewQuery>,
         world: &'w World,
     ) -> Result<(), NodeRunError> {
         let composite_pipeline = world.resource::<CompositePipeline>();
@@ -228,6 +239,11 @@ impl ViewNode for CompositeNode {
             return Ok(());
         };
 
+        let voronoi_texture = world
+            .resource::<VoronoiTextures>()
+            .get(&view.retained_view_entity)
+            .expect("expected the voronoi texture to exist");
+
         let post_process = target.post_process_write();
         let sampler = render_context
             .render_device()
@@ -236,7 +252,7 @@ impl ViewNode for CompositeNode {
         let bind_group = render_context.render_device().create_bind_group(
             "composite_bind_group",
             &composite_pipeline.layout,
-            &BindGroupEntries::sequential((&flood_textures.input().default_view, &sampler)),
+            &BindGroupEntries::sequential((&voronoi_texture.input().default_view, &sampler)),
         );
 
         let mut pass = render_context.begin_tracked_render_pass(RenderPassDescriptor {
@@ -245,6 +261,7 @@ impl ViewNode for CompositeNode {
                 view: &post_process.destination,
                 resolve_target: None,
                 ops: Operations::default(),
+                depth_slice: None,
             })],
             ..default()
         });

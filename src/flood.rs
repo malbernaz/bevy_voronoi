@@ -1,6 +1,5 @@
 use bevy::{
-    asset::weak_handle,
-    core_pipeline::fullscreen_vertex_shader::fullscreen_shader_vertex_state,
+    core_pipeline::FullscreenShader,
     prelude::*,
     render::{
         camera::ExtractedCamera,
@@ -17,9 +16,6 @@ use bevy::{
     },
 };
 
-pub const FLOOD_SEED_SHADER: Handle<Shader> = weak_handle!("75d5b3e1-ce23-4fcf-8a24-91e9bd6eeed8");
-pub const FLOOD_SHADER: Handle<Shader> = weak_handle!("7ac1a62e-dd67-404f-a5f6-3633b8bdcbef");
-
 #[derive(Resource)]
 pub struct FloodPipeline {
     pub seed_layout: BindGroupLayout,
@@ -28,94 +24,94 @@ pub struct FloodPipeline {
     pub pipeline: CachedRenderPipelineId,
 }
 
-impl FromWorld for FloodPipeline {
-    fn from_world(world: &mut World) -> Self {
-        let seed_layout = world.resource::<RenderDevice>().create_bind_group_layout(
-            "flood_seed_bind_group_layout",
-            &BindGroupLayoutEntries::sequential(
-                ShaderStages::FRAGMENT,
-                (
-                    texture_2d(TextureSampleType::Float { filterable: true }),
-                    sampler(SamplerBindingType::Filtering),
-                ),
+pub fn init_flood_pipeline(
+    mut commands: Commands,
+    render_device: Res<RenderDevice>,
+    fullscreen_shader: Res<FullscreenShader>,
+    pipeline_cache: Res<PipelineCache>,
+    asset_server: Res<AssetServer>,
+) {
+    let seed_layout = render_device.create_bind_group_layout(
+        "flood_seed_bind_group_layout",
+        &BindGroupLayoutEntries::sequential(
+            ShaderStages::FRAGMENT,
+            (
+                texture_2d(TextureSampleType::Float { filterable: true }),
+                sampler(SamplerBindingType::Filtering),
             ),
-        );
+        ),
+    );
 
-        let seed_pipeline =
-            world
-                .resource::<PipelineCache>()
-                .queue_render_pipeline(RenderPipelineDescriptor {
-                    label: Some("flood_seed_pipeline".into()),
-                    layout: vec![seed_layout.clone()],
-                    vertex: fullscreen_shader_vertex_state(),
-                    fragment: Some(FragmentState {
-                        shader: FLOOD_SEED_SHADER,
-                        shader_defs: vec![],
-                        entry_point: "fragment".into(),
-                        targets: vec![Some(ColorTargetState {
-                            format: TextureFormat::Rgba16Float,
-                            blend: None,
-                            write_mask: ColorWrites::ALL,
-                        })],
-                    }),
-                    push_constant_ranges: vec![],
-                    primitive: Default::default(),
-                    depth_stencil: None,
-                    multisample: MultisampleState {
-                        count: 1,
-                        mask: !0,
-                        alpha_to_coverage_enabled: false,
-                    },
-                    zero_initialize_workgroup_memory: false,
-                });
+    let fullscreen_vertex_state = fullscreen_shader.to_vertex_state();
 
-        let layout = world.resource::<RenderDevice>().create_bind_group_layout(
-            "flood_bind_group_layout",
-            &BindGroupLayoutEntries::sequential(
-                ShaderStages::FRAGMENT,
-                (
-                    texture_2d(TextureSampleType::Float { filterable: true }),
-                    sampler(SamplerBindingType::Filtering),
-                    uniform_buffer::<UVec2>(false),
-                ),
+    let seed_pipeline = pipeline_cache.queue_render_pipeline(RenderPipelineDescriptor {
+        label: Some("flood_seed_pipeline".into()),
+        layout: vec![seed_layout.clone()],
+        vertex: fullscreen_vertex_state.clone(),
+        fragment: Some(FragmentState {
+            shader: asset_server.load("embedded://bevy_voronoi/flood_seed.wgsl"),
+            shader_defs: vec![],
+            entry_point: Some("fragment".into()),
+            targets: vec![Some(ColorTargetState {
+                format: TextureFormat::Rgba16Float,
+                blend: None,
+                write_mask: ColorWrites::ALL,
+            })],
+        }),
+        push_constant_ranges: vec![],
+        primitive: Default::default(),
+        depth_stencil: None,
+        multisample: MultisampleState {
+            count: 1,
+            mask: !0,
+            alpha_to_coverage_enabled: false,
+        },
+        zero_initialize_workgroup_memory: false,
+    });
+
+    let layout = render_device.create_bind_group_layout(
+        "flood_bind_group_layout",
+        &BindGroupLayoutEntries::sequential(
+            ShaderStages::FRAGMENT,
+            (
+                texture_2d(TextureSampleType::Float { filterable: true }),
+                sampler(SamplerBindingType::Filtering),
+                uniform_buffer::<UVec2>(false),
             ),
-        );
+        ),
+    );
 
-        let pipeline =
-            world
-                .resource::<PipelineCache>()
-                .queue_render_pipeline(RenderPipelineDescriptor {
-                    label: Some("flood_pipeline".into()),
-                    layout: vec![layout.clone()],
-                    vertex: fullscreen_shader_vertex_state(),
-                    fragment: Some(FragmentState {
-                        shader: FLOOD_SHADER,
-                        shader_defs: vec![],
-                        entry_point: "fragment".into(),
-                        targets: vec![Some(ColorTargetState {
-                            format: TextureFormat::Rgba16Float,
-                            blend: None,
-                            write_mask: ColorWrites::ALL,
-                        })],
-                    }),
-                    push_constant_ranges: vec![],
-                    primitive: Default::default(),
-                    depth_stencil: None,
-                    multisample: MultisampleState {
-                        count: 1,
-                        mask: !0,
-                        alpha_to_coverage_enabled: false,
-                    },
-                    zero_initialize_workgroup_memory: false,
-                });
+    let pipeline = pipeline_cache.queue_render_pipeline(RenderPipelineDescriptor {
+        label: Some("flood_pipeline".into()),
+        layout: vec![layout.clone()],
+        vertex: fullscreen_vertex_state,
+        fragment: Some(FragmentState {
+            shader: asset_server.load("embedded://bevy_voronoi/flood.wgsl"),
+            shader_defs: vec![],
+            entry_point: Some("fragment".into()),
+            targets: vec![Some(ColorTargetState {
+                format: TextureFormat::Rgba16Float,
+                blend: None,
+                write_mask: ColorWrites::ALL,
+            })],
+        }),
+        push_constant_ranges: vec![],
+        primitive: Default::default(),
+        depth_stencil: None,
+        multisample: MultisampleState {
+            count: 1,
+            mask: !0,
+            alpha_to_coverage_enabled: false,
+        },
+        zero_initialize_workgroup_memory: false,
+    });
 
-        Self {
-            seed_pipeline,
-            seed_layout,
-            layout,
-            pipeline,
-        }
-    }
+    commands.insert_resource(FloodPipeline {
+        seed_pipeline,
+        seed_layout,
+        layout,
+        pipeline,
+    });
 }
 
 pub fn run_flood_seed_pass<'w>(
@@ -150,6 +146,7 @@ pub fn run_flood_seed_pass<'w>(
             view: &output.default_view,
             resolve_target: None,
             ops: Operations::default(),
+            depth_slice: None,
         })],
         ..default()
     });
@@ -205,6 +202,7 @@ pub fn run_flood_pass<'w>(
             view: &output.default_view,
             resolve_target: None,
             ops: Operations::default(),
+            depth_slice: None,
         })],
         ..default()
     });

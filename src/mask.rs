@@ -1,18 +1,18 @@
 use std::ops::Range;
 
 use bevy::{
-    asset::{weak_handle, UntypedAssetId},
-    core_pipeline::core_2d::BatchSetKey2d,
     ecs::system::{lifetimeless::SRes, SystemParamItem},
+    math::FloatOrd,
+    mesh::MeshVertexBufferLayoutRef,
+    platform::collections::HashSet,
     prelude::*,
     render::{
         camera::ExtractedCamera,
-        mesh::MeshVertexBufferLayoutRef,
         render_asset::RenderAssets,
         render_phase::{
-            BinnedPhaseItem, CachedRenderPipelinePhaseItem, DrawFunctionId, PhaseItem,
-            PhaseItemExtraIndex, RenderCommand, RenderCommandResult, SetItemPipeline,
-            TrackedRenderPass, ViewBinnedRenderPhases,
+            CachedRenderPipelinePhaseItem, DrawFunctionId, PhaseItem, PhaseItemExtraIndex,
+            RenderCommand, RenderCommandResult, SetItemPipeline, SortedPhaseItem,
+            SortedRenderPhase, TrackedRenderPass, ViewSortedRenderPhases,
         },
         render_resource::{
             binding_types::{sampler, texture_2d},
@@ -26,38 +26,42 @@ use bevy::{
         sync_world::{MainEntity, MainEntityHashMap},
         texture::{CachedTexture, FallbackImage, GpuImage},
         view::RetainedViewEntity,
+        Extract,
     },
-    sprite::{
+    sprite_render::{
         DrawMesh2d, Mesh2dPipeline, Mesh2dPipelineKey, SetMesh2dBindGroup, SetMesh2dViewBindGroup,
     },
 };
 
-use crate::plugin::RenderVoronoiMaterials;
-
-pub const MASK_SHADER: Handle<Shader> = weak_handle!("cd8c10c3-d6ad-4676-9cd8-22f2df16b00d");
+use crate::plugin::{RenderVoronoiMaterials, VoronoiView};
 
 #[derive(Resource)]
 pub struct MaskPipeline {
     pub mesh_pipeline: Mesh2dPipeline,
     pub material_layout: BindGroupLayout,
+    pub shader: Handle<Shader>,
 }
 
-impl FromWorld for MaskPipeline {
-    fn from_world(world: &mut World) -> Self {
-        Self {
-            mesh_pipeline: Mesh2dPipeline::from_world(world),
-            material_layout: world.resource::<RenderDevice>().create_bind_group_layout(
-                "mask_material_bind_group_layout",
-                &BindGroupLayoutEntries::sequential(
-                    ShaderStages::FRAGMENT,
-                    (
-                        texture_2d(TextureSampleType::Float { filterable: true }),
-                        sampler(SamplerBindingType::Filtering),
-                    ),
+pub fn init_mask_pipeline(
+    mut commands: Commands,
+    render_device: Res<RenderDevice>,
+    mesh_2d_pipeline: Res<Mesh2dPipeline>,
+    asset_server: Res<AssetServer>,
+) {
+    commands.insert_resource(MaskPipeline {
+        mesh_pipeline: mesh_2d_pipeline.clone(),
+        shader: asset_server.load("embedded://bevy_voronoi/mask.wgsl"),
+        material_layout: render_device.create_bind_group_layout(
+            "mask_material_bind_group_layout",
+            &BindGroupLayoutEntries::sequential(
+                ShaderStages::FRAGMENT,
+                (
+                    texture_2d(TextureSampleType::Float { filterable: true }),
+                    sampler(SamplerBindingType::Filtering),
                 ),
             ),
-        }
-    }
+        ),
+    });
 }
 
 impl SpecializedMeshPipeline for MaskPipeline {
@@ -77,9 +81,9 @@ impl SpecializedMeshPipeline for MaskPipeline {
             label: Some("mask_pipeline".into()),
             layout: mesh_layout,
             fragment: Some(FragmentState {
-                shader: MASK_SHADER,
+                shader: self.shader.clone(),
                 shader_defs: vec![],
-                entry_point: "fragment".into(),
+                entry_point: Some("fragment".into()),
                 targets: vec![Some(ColorTargetState {
                     format: TextureFormat::Rgba16Float,
                     blend: None,
@@ -94,33 +98,29 @@ impl SpecializedMeshPipeline for MaskPipeline {
 }
 
 pub struct MaskPhase {
-    pub bin_key: MaskPhaseBinKey,
-    pub representative_entity: (Entity, MainEntity),
-    pub batch_range: Range<u32>,
-    pub extra_index: PhaseItemExtraIndex,
-}
-
-/// Data that must be identical in order to batch phase items together.
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct MaskPhaseBinKey {
+    pub sort_key: FloatOrd,
     pub pipeline: CachedRenderPipelineId,
     pub draw_function: DrawFunctionId,
-    pub mesh_id: UntypedAssetId,
+    pub entity: (Entity, MainEntity),
+    pub batch_range: Range<u32>,
+    pub extra_index: PhaseItemExtraIndex,
+    pub indexed: bool,
 }
 
 impl PhaseItem for MaskPhase {
     #[inline]
     fn entity(&self) -> Entity {
-        self.representative_entity.0
+        self.entity.0
     }
 
+    #[inline]
     fn main_entity(&self) -> MainEntity {
-        self.representative_entity.1
+        self.entity.1
     }
 
     #[inline]
     fn draw_function(&self) -> DrawFunctionId {
-        self.bin_key.draw_function
+        self.draw_function
     }
 
     #[inline]
@@ -133,41 +133,62 @@ impl PhaseItem for MaskPhase {
         &mut self.batch_range
     }
 
+    #[inline]
     fn extra_index(&self) -> PhaseItemExtraIndex {
         self.extra_index.clone()
     }
 
+    #[inline]
     fn batch_range_and_extra_index_mut(&mut self) -> (&mut Range<u32>, &mut PhaseItemExtraIndex) {
         (&mut self.batch_range, &mut self.extra_index)
     }
 }
 
-impl BinnedPhaseItem for MaskPhase {
-    type BatchSetKey = BatchSetKey2d;
+impl SortedPhaseItem for MaskPhase {
+    type SortKey = FloatOrd;
 
-    type BinKey = MaskPhaseBinKey;
+    #[inline]
+    fn sort_key(&self) -> Self::SortKey {
+        self.sort_key
+    }
 
-    fn new(
-        _batch_set_key: Self::BatchSetKey,
-        bin_key: Self::BinKey,
-        representative_entity: (Entity, MainEntity),
-        batch_range: Range<u32>,
-        extra_index: PhaseItemExtraIndex,
-    ) -> Self {
-        MaskPhase {
-            bin_key,
-            representative_entity,
-            batch_range,
-            extra_index,
-        }
+    #[inline]
+    fn sort(items: &mut [Self]) {
+        radsort::sort_by_key(items, |item| item.sort_key().0);
+    }
+
+    fn indexed(&self) -> bool {
+        self.indexed
     }
 }
 
 impl CachedRenderPipelinePhaseItem for MaskPhase {
     #[inline]
     fn cached_pipeline(&self) -> CachedRenderPipelineId {
-        self.bin_key.pipeline
+        self.pipeline
     }
+}
+
+pub fn extract_mask_phases(
+    cameras: Extract<Query<(Entity, &Camera), (With<Camera2d>, With<VoronoiView>)>>,
+    mut mask_phases: ResMut<ViewSortedRenderPhases<MaskPhase>>,
+    mut live_entities: Local<HashSet<RetainedViewEntity>>,
+) {
+    live_entities.clear();
+
+    for (entity, camera) in &cameras {
+        if !camera.is_active {
+            continue;
+        }
+
+        let retained_view_entity = RetainedViewEntity::new(entity.into(), None, 0);
+
+        mask_phases.insert_or_clear(retained_view_entity);
+        live_entities.insert(retained_view_entity);
+    }
+
+    // Clear out all dead views
+    mask_phases.retain(|camera_entity, _| live_entities.contains(camera_entity));
 }
 
 pub type DrawMaskMesh = (
@@ -186,13 +207,13 @@ pub fn prepare_mask_material_bind_groups(
     pipeline: Res<MaskPipeline>,
     images: Res<RenderAssets<GpuImage>>,
     fallback_image: Res<FallbackImage>,
-    flood_materials: Res<RenderVoronoiMaterials>,
+    voronoi_materials: Res<RenderVoronoiMaterials>,
     mut bind_groups: ResMut<MaskMaterialBindGroups>,
 ) {
     // Only update bind groups for entities that have changed or are new
-    bind_groups.retain(|entity, _| flood_materials.contains_key(entity));
+    bind_groups.retain(|entity, _| voronoi_materials.contains_key(entity));
 
-    for (entity, alpha_mask) in flood_materials.iter() {
+    for (entity, alpha_mask) in voronoi_materials.iter() {
         let alpha_mask_image = if let Some(image) = images.get(*alpha_mask) {
             image
         } else {
@@ -234,27 +255,18 @@ impl<P: PhaseItem, const I: usize> RenderCommand<P> for SetMaskMaterialBindGroup
 pub fn run_mask_pass<'w>(
     world: &'w World,
     render_context: &mut RenderContext<'w>,
-    retained_view_entity: &RetainedViewEntity,
+    phase: &SortedRenderPhase<MaskPhase>,
     view_entity: &Entity,
     output: &CachedTexture,
     camera: &ExtractedCamera,
 ) {
-    let Some(mask_phases) = world.get_resource::<ViewBinnedRenderPhases<MaskPhase>>() else {
-        error!("MaskPhase not available");
-        return;
-    };
-
-    let Some(phase) = mask_phases.get(retained_view_entity) else {
-        error!("View MaskPhase not available");
-        return;
-    };
-
     let mut pass = render_context.begin_tracked_render_pass(RenderPassDescriptor {
         label: Some("mask_pass"),
         color_attachments: &[Some(RenderPassColorAttachment {
             view: &output.default_view,
             resolve_target: None,
             ops: Operations::default(),
+            depth_slice: None,
         })],
         ..default()
     });
@@ -263,9 +275,7 @@ pub fn run_mask_pass<'w>(
         pass.set_camera_viewport(viewport);
     }
 
-    if !phase.is_empty() {
-        if let Err(err) = phase.render(&mut pass, world, *view_entity) {
-            error!("Error encountered while rendering the mask phase {err:?}");
-        }
+    if let Err(err) = phase.render(&mut pass, world, *view_entity) {
+        error!("Error encountered while rendering the voronoi mask phase {err:?}");
     }
 }
