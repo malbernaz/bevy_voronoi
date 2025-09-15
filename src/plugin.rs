@@ -255,7 +255,7 @@ fn prepare_voronoi_textures(
         &ViewTarget,
         &ExtractedView,
         &VoronoiView,
-        Option<&VoronoiViewNeedsUpdate>,
+        Has<VoronoiViewNeedsUpdate>,
     )>,
     render_device: Res<RenderDevice>,
     mut texture_cache: ResMut<TextureCache>,
@@ -267,7 +267,7 @@ fn prepare_voronoi_textures(
     for (view_target, extracted_view, voronoi_view, needs_update) in &views {
         live_entities.insert(extracted_view.retained_view_entity);
 
-        if needs_update.is_none() {
+        if !needs_update {
             continue;
         }
 

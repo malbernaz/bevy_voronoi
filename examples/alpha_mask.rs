@@ -3,7 +3,7 @@ use bevy::{
         core_2d::graph::{Core2d, Node2d},
         FullscreenShader,
     },
-    dev_tools::fps_overlay::{FpsOverlayConfig, FpsOverlayPlugin},
+    dev_tools::fps_overlay::{FpsOverlayConfig, FpsOverlayPlugin, FrameTimeGraphConfig},
     ecs::{query::QueryItem, system::lifetimeless::Read},
     prelude::*,
     render::{
@@ -42,6 +42,10 @@ fn main() {
             FpsOverlayPlugin {
                 config: FpsOverlayConfig {
                     enabled: true,
+                    frame_time_graph_config: FrameTimeGraphConfig {
+                        enabled: false,
+                        ..default()
+                    },
                     ..default()
                 },
             },

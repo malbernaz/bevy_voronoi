@@ -155,11 +155,6 @@ impl SortedPhaseItem for MaskPhase {
         self.sort_key
     }
 
-    #[inline]
-    fn sort(items: &mut [Self]) {
-        radsort::sort_by_key(items, |item| item.sort_key().0);
-    }
-
     fn indexed(&self) -> bool {
         self.indexed
     }
@@ -224,8 +219,8 @@ pub fn queue_mask_meshes(
 
         let draw_mask_mesh = mask_draw_functions.read().id::<DrawMaskMesh>();
 
-        for (render_entity, visible_entity) in visible_entities.iter::<Mesh2d>() {
-            let Some(mesh_instance) = render_mesh_instances.get_mut(visible_entity) else {
+        for (render_entity, main_entity) in visible_entities.iter::<Mesh2d>() {
+            let Some(mesh_instance) = render_mesh_instances.get_mut(main_entity) else {
                 continue;
             };
             let Some(mesh) = render_meshes.get(mesh_instance.mesh_asset_id) else {
@@ -248,7 +243,7 @@ pub fn queue_mask_meshes(
                 sort_key: FloatOrd(mesh_instance.transforms.world_from_local.translation.z),
                 pipeline: pipeline_id,
                 draw_function: draw_mask_mesh,
-                entity: (*render_entity, *visible_entity),
+                entity: (*render_entity, *main_entity),
                 batch_range: 0..1,
                 extra_index: PhaseItemExtraIndex::None,
                 indexed: mesh.indexed(),
