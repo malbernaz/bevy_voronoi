@@ -11,7 +11,7 @@ edition = "2021"
 exclude = ["static/*"]
 
 [dependencies]
-bevy = { version = "0.17.0-rc.1", default-features = false, features = [
+bevy = { version = "0.17", default-features = false, features = [
   "bevy_core_pipeline",
   "bevy_winit",
   "bevy_sprite_render",
@@ -19,10 +19,7 @@ bevy = { version = "0.17.0-rc.1", default-features = false, features = [
 ] }
 
 [dev-dependencies]
-bevy = { version = "0.17.0-rc.1", features = [
-  "dynamic_linking",
-  "bevy_dev_tools",
-] }
+bevy = { version = "0.17", features = ["bevy_dev_tools"] }
 
 [profile.dev]
 opt-level = 1
