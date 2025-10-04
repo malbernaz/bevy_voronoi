@@ -1,7 +1,7 @@
 use std::ops::Range;
 
 use bevy::{
-    ecs::system::{lifetimeless::SRes, SystemParamItem},
+    ecs::system::{lifetimeless::SRes, SystemChangeTick, SystemParamItem},
     math::FloatOrd,
     mesh::MeshVertexBufferLayoutRef,
     platform::collections::HashSet,
@@ -31,12 +31,16 @@ use bevy::{
         Extract,
     },
     sprite_render::{
-        DrawMesh2d, Mesh2dPipeline, Mesh2dPipelineKey, RenderMesh2dInstances, SetMesh2dBindGroup,
-        SetMesh2dViewBindGroup, ViewKeyCache,
+        DrawMesh2d, EntitySpecializationTicks, Mesh2dPipeline, Mesh2dPipelineKey,
+        RenderMesh2dInstances, SetMesh2dBindGroup, SetMesh2dViewBindGroup,
+        SpecializedMaterial2dPipelineCache, ViewKeyCache,
     },
 };
 
-use crate::plugin::{RenderVoronoiMaterials, VoronoiTexture, VoronoiView, VoronoiViewNeedsUpdate};
+use crate::plugin::{
+    RenderVoronoiMaterials, VoronoiMaterial, VoronoiTexture, VoronoiView,
+    VoronoiViewSpecializationTicks,
+};
 
 #[derive(Resource)]
 pub struct MaskPipeline {
@@ -198,11 +202,14 @@ pub fn queue_mask_meshes(
     mut mask_pipelines: ResMut<SpecializedMeshPipelines<MaskPipeline>>,
     mask_pipeline: Res<MaskPipeline>,
     view_key_cache: Res<ViewKeyCache>,
-    views: Query<
-        (&MainEntity, &ExtractedView, &RenderVisibleEntities),
-        With<VoronoiViewNeedsUpdate>,
-    >,
+    views: Query<(&MainEntity, &ExtractedView, &RenderVisibleEntities)>,
     render_material_instances: Res<RenderVoronoiMaterials>,
+    mut specialized_material_pipeline_cache: ResMut<
+        SpecializedMaterial2dPipelineCache<VoronoiMaterial>,
+    >,
+    material_specialization_ticks: Res<EntitySpecializationTicks<VoronoiMaterial>>,
+    view_specialization_ticks: Res<VoronoiViewSpecializationTicks>,
+    ticks: SystemChangeTick,
 ) {
     if render_material_instances.is_empty() {
         return;
@@ -219,13 +226,38 @@ pub fn queue_mask_meshes(
 
         let draw_mask_mesh = mask_draw_functions.read().id::<DrawMaskMesh>();
 
-        for (render_entity, main_entity) in visible_entities.iter::<Mesh2d>() {
-            let Some(mesh_instance) = render_mesh_instances.get_mut(main_entity) else {
+        let view_tick = view_specialization_ticks.get(view_entity).unwrap();
+        let view_specialized_material_pipeline_cache = specialized_material_pipeline_cache
+            .entry(*view_entity)
+            .or_default();
+
+        for (render_entity, view_entity) in visible_entities.iter::<Mesh2d>() {
+            if !render_material_instances.contains_key(view_entity) {
+                return;
+            }
+
+            let entity_tick = material_specialization_ticks.get(view_entity).unwrap();
+
+            let last_specialized_tick = view_specialized_material_pipeline_cache
+                .get(view_entity)
+                .map(|(tick, _)| *tick);
+
+            let needs_specialization = last_specialized_tick.is_none_or(|tick| {
+                view_tick.is_newer_than(tick, ticks.this_run())
+                    || entity_tick.is_newer_than(tick, ticks.this_run())
+            });
+
+            if !needs_specialization {
+                continue;
+            }
+
+            let Some(mesh_instance) = render_mesh_instances.get_mut(view_entity) else {
                 continue;
             };
             let Some(mesh) = render_meshes.get(mesh_instance.mesh_asset_id) else {
                 continue;
             };
+
             let pipeline_id = mask_pipelines.specialize(
                 &pipeline_cache,
                 &mask_pipeline,
@@ -239,11 +271,15 @@ pub fn queue_mask_meshes(
                     continue;
                 }
             };
+
+            view_specialized_material_pipeline_cache
+                .insert(*view_entity, (ticks.this_run(), pipeline_id));
+
             mask_phase.add(MaskPhase {
                 sort_key: FloatOrd(mesh_instance.transforms.world_from_local.translation.z),
                 pipeline: pipeline_id,
                 draw_function: draw_mask_mesh,
-                entity: (*render_entity, *main_entity),
+                entity: (*render_entity, *view_entity),
                 batch_range: 0..1,
                 extra_index: PhaseItemExtraIndex::None,
                 indexed: mesh.indexed(),

@@ -1,11 +1,12 @@
-use std::any::TypeId;
-
 use bevy::{
-    asset::embedded_asset,
-    camera::visibility::VisibleEntities,
+    asset::{embedded_asset, AsAssetId, AssetEventSystems},
     core_pipeline::core_2d::graph::{Core2d, Node2d},
-    ecs::{query::QueryItem, system::lifetimeless::Read},
-    platform::collections::{HashMap, HashSet},
+    ecs::{
+        component::Tick,
+        query::QueryItem,
+        system::{lifetimeless::Read, SystemChangeTick},
+    },
+    platform::collections::HashMap,
     prelude::*,
     render::{
         batching::no_gpu_preprocessing::batch_and_prepare_sorted_render_phase,
@@ -20,12 +21,16 @@ use bevy::{
             TextureUsages,
         },
         renderer::{RenderContext, RenderDevice},
-        sync_world::MainEntityHashMap,
+        sync_world::{MainEntity, MainEntityHashMap},
         texture::{CachedTexture, TextureCache},
         view::{ExtractedView, RetainedViewEntity, ViewTarget},
         Extract, Render, RenderApp, RenderStartup, RenderSystems,
     },
-    sprite_render::{init_mesh_2d_pipeline, Mesh2dPipeline},
+    sprite_render::{
+        init_mesh_2d_pipeline, EntitiesNeedingSpecialization, EntitySpecializationTicks,
+        Mesh2dPipeline, SpecializedMaterial2dPipelineCache,
+    },
+    utils::Parallel,
 };
 
 use crate::{flood::*, mask::*};
@@ -39,8 +44,16 @@ impl Plugin for Voronoi2dPlugin {
 
         app.add_plugins(ExtractComponentPlugin::<VoronoiView>::default())
             .add_plugins(ExtractComponentPlugin::<VoronoiMaterial>::default())
-            .add_plugins(ExtractComponentPlugin::<VoronoiViewNeedsUpdate>::default())
-            .add_systems(PostUpdate, check_voronoi_views_needing_update);
+            .init_resource::<EntitiesNeedingSpecialization<VoronoiView>>()
+            .init_resource::<EntitiesNeedingSpecialization<VoronoiMaterial>>()
+            .add_systems(
+                PostUpdate,
+                (
+                    check_views_needing_specialization,
+                    check_materials_needing_specialization,
+                )
+                    .after(AssetEventSystems),
+            );
 
         let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
             return;
@@ -53,11 +66,17 @@ impl Plugin for Voronoi2dPlugin {
             .init_resource::<MaskMaterialBindGroups>()
             .init_resource::<DrawFunctions<MaskPhase>>()
             .init_resource::<VoronoiTextures>()
+            .init_resource::<SpecializedMaterial2dPipelineCache<VoronoiMaterial>>()
+            .init_resource::<EntitySpecializationTicks<VoronoiView>>()
+            .init_resource::<EntitySpecializationTicks<VoronoiMaterial>>()
+            .init_resource::<VoronoiViewSpecializationTicks>()
             .add_render_command::<MaskPhase, DrawMaskMesh>()
             .add_systems(
                 ExtractSchedule,
                 (
                     extract_mask_phases.after(extract_cameras),
+                    extract_entities_needs_specialization,
+                    extract_views_need_specialization,
                     extract_voronoi_materials,
                 ),
             )
@@ -81,14 +100,7 @@ impl Plugin for Voronoi2dPlugin {
                 ),
             )
             .add_render_graph_node::<ViewNodeRunner<VoronoiDrawNode>>(Core2d, VoronoiDrawPassLabel)
-            .add_render_graph_edges(
-                Core2d,
-                (
-                    Node2d::MainOpaquePass,
-                    VoronoiDrawPassLabel,
-                    Node2d::MainTransparentPass,
-                ),
-            );
+            .add_render_graph_edges(Core2d, (VoronoiDrawPassLabel, Node2d::StartMainPass));
     }
 }
 
@@ -126,13 +138,17 @@ impl From<&VoronoiMaterial> for AssetId<Image> {
     }
 }
 
-#[derive(Component, Clone, ExtractComponent)]
-pub struct VoronoiViewNeedsUpdate;
+impl AsAssetId for VoronoiMaterial {
+    type Asset = Image;
 
-fn check_voronoi_views_needing_update(
-    mut commands: Commands,
-    changed_views: Query<
-        (),
+    fn as_asset_id(&self) -> AssetId<Self::Asset> {
+        self.alpha_mask.id()
+    }
+}
+
+pub fn check_views_needing_specialization(
+    needs_specialization: Query<
+        Entity,
         (
             Or<(
                 Changed<Camera>,
@@ -142,34 +158,78 @@ fn check_voronoi_views_needing_update(
             With<VoronoiView>,
         ),
     >,
-    changed_materials: Query<
-        (),
+    mut par_local: Local<Parallel<Vec<Entity>>>,
+    mut entities_needing_specialization: ResMut<EntitiesNeedingSpecialization<VoronoiView>>,
+) {
+    entities_needing_specialization.clear();
+
+    needs_specialization
+        .par_iter()
+        .for_each(|entity| par_local.borrow_local_mut().push(entity));
+
+    par_local.drain_into(&mut entities_needing_specialization);
+}
+
+pub fn check_materials_needing_specialization(
+    needs_specialization: Query<
+        Entity,
         (
             Or<(
                 Changed<Mesh2d>,
                 AssetChanged<Mesh2d>,
                 Changed<VoronoiMaterial>,
+                AssetChanged<VoronoiMaterial>,
                 Changed<GlobalTransform>,
             )>,
             With<VoronoiMaterial>,
         ),
     >,
-    views: Query<(Entity, &VisibleEntities), With<VoronoiView>>,
+    mut par_local: Local<Parallel<Vec<Entity>>>,
+    mut entities_needing_specialization: ResMut<EntitiesNeedingSpecialization<VoronoiMaterial>>,
 ) {
-    for (entity, visible_entities) in &views {
-        commands.entity(entity).remove::<VoronoiViewNeedsUpdate>();
+    entities_needing_specialization.clear();
 
-        if changed_views.contains(entity) {
-            commands.entity(entity).insert(VoronoiViewNeedsUpdate);
-            break;
-        }
+    needs_specialization
+        .par_iter()
+        .for_each(|entity| par_local.borrow_local_mut().push(entity));
 
-        for visible_entity in visible_entities.iter(TypeId::of::<VoronoiMaterial>()) {
-            if changed_materials.contains(*visible_entity) {
-                commands.entity(entity).insert(VoronoiViewNeedsUpdate);
-                break;
+    par_local.drain_into(&mut entities_needing_specialization);
+}
+
+#[derive(Resource, Deref, DerefMut, Default)]
+pub struct VoronoiViewSpecializationTicks(MainEntityHashMap<Tick>);
+
+pub fn extract_views_need_specialization(
+    entities_needing_specialization: Extract<Res<EntitiesNeedingSpecialization<VoronoiView>>>,
+    mut view_specialization_ticks: ResMut<VoronoiViewSpecializationTicks>,
+    ticks: SystemChangeTick,
+) {
+    for entity in entities_needing_specialization.iter() {
+        view_specialization_ticks.insert((*entity).into(), ticks.this_run());
+    }
+}
+
+pub fn extract_entities_needs_specialization(
+    entities_needing_specialization: Extract<Res<EntitiesNeedingSpecialization<VoronoiMaterial>>>,
+    mut entity_specialization_ticks: ResMut<EntitySpecializationTicks<VoronoiMaterial>>,
+    mut removed_components: Extract<RemovedComponents<VoronoiMaterial>>,
+    mut specialized_view_pipeline_cache: ResMut<
+        SpecializedMaterial2dPipelineCache<VoronoiMaterial>,
+    >,
+    views: Query<&MainEntity, With<ExtractedView>>,
+    ticks: SystemChangeTick,
+) {
+    for entity in removed_components.read() {
+        entity_specialization_ticks.remove(&MainEntity::from(entity));
+        for view in views {
+            if let Some(cache) = specialized_view_pipeline_cache.get_mut(view) {
+                cache.remove(&MainEntity::from(entity));
             }
         }
+    }
+
+    for entity in entities_needing_specialization.iter() {
+        entity_specialization_ticks.insert((*entity).into(), ticks.this_run());
     }
 }
 
@@ -251,26 +311,12 @@ fn create_aux_texture(
 }
 
 fn prepare_voronoi_textures(
-    views: Query<(
-        &ViewTarget,
-        &ExtractedView,
-        &VoronoiView,
-        Has<VoronoiViewNeedsUpdate>,
-    )>,
+    views: Query<(&ViewTarget, &ExtractedView, &VoronoiView)>,
     render_device: Res<RenderDevice>,
     mut texture_cache: ResMut<TextureCache>,
     mut voronoi_textures: ResMut<VoronoiTextures>,
-    mut live_entities: Local<HashSet<RetainedViewEntity>>,
 ) {
-    live_entities.clear();
-
-    for (view_target, extracted_view, voronoi_view, needs_update) in &views {
-        live_entities.insert(extracted_view.retained_view_entity);
-
-        if !needs_update {
-            continue;
-        }
-
+    for (view_target, extracted_view, voronoi_view) in &views {
         voronoi_textures.insert(
             extracted_view.retained_view_entity,
             VoronoiTexture {
@@ -292,8 +338,6 @@ fn prepare_voronoi_textures(
             },
         );
     }
-
-    voronoi_textures.retain(|entity, _| live_entities.contains(entity));
 }
 
 #[derive(RenderLabel, Debug, Clone, Hash, PartialEq, Eq)]
