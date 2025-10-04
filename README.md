@@ -7,9 +7,9 @@ A low-level **Bevy** plugin for generating **Voronoi diagrams** from 2D meshes a
 ## **Features**
 
 - Generates **Voronoi diagrams** from any `Mesh2d`.
-- Supports **alpha masks** for transparency and occlusion.
+- Supports **alpha masks** for transparency based on a texture.
 - Uses the **Jump Flood Algorithm (JFA)** for efficient computation.
-- Adds a **VoronoiTextures** resource to the render world with the **fragment coordinates** for the diagram and the original alpha mask.
+- Adds a **VoronoiTextures** resource to the render world with a voronoi diagram for each view with a **VoronoiView**.
 
 ## Usage
 
